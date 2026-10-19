@@ -599,9 +599,11 @@ function toggleMic() {
     const prefix = box && box.value.trim() ? box.value.trim() + " " : "";
     rec = new SR(); rec.lang = "en-US"; rec.interimResults = true; rec.continuous = true;
     rec.onresult = ev => {
-      let s = "";
-      for (const r of ev.results) s += r[0].transcript;
-      const ta = $("#say"); if (ta) ta.value = prefix + s.trim();
+      // Each pause starts a new result; join them with a space so words don't run together.
+      const parts = [];
+      for (const r of ev.results) { const t = (r[0] && r[0].transcript || "").trim(); if (t) parts.push(t); }
+      const s = parts.join(" ").replace(/\s+/g, " ");
+      const ta = $("#say"); if (ta) ta.value = prefix + s;
     };
     rec.onerror = ev => {
       const code = ev && ev.error;
