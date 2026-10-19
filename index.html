@@ -614,7 +614,13 @@ function toggleMic() {
       const parts = [];
       for (const r of ev.results) { const t = (r[0] && r[0].transcript || "").trim(); if (t) parts.push(t); }
       const s = parts.join(" ").replace(/\s+/g, " ");
-      const ta = $("#say"); if (ta) ta.value = prefix + s;
+      // Saying "delete" removes the word before it; listening continues.
+      const words = [];
+      for (const w of (prefix + s).split(/\s+/)) {
+        if (!w) continue;
+        if (/^delete[.,!?]*$/i.test(w)) words.pop(); else words.push(w);
+      }
+      const ta = $("#say"); if (ta) ta.value = words.join(" ") + (words.length ? " " : "");
     };
     rec.onerror = ev => {
       const code = ev && ev.error;
@@ -676,7 +682,7 @@ function viewLog() {
     </div>
     <input id="memo" placeholder="Memo (optional)" aria-label="Memo" enterkeyhint="done">
     <div class="row"><button class="primary grow" type="submit">Add expense</button></div>
-    <div class="hint">Tap the microphone button and speak (tap it again to stop), or use the microphone key on the keyboard. Check the text, then tap Add expense. Try: “Taxi 25 dollars by card yesterday”, “Coffee 450 and sandwich 520”, “Dinner 6000 yen memo team dinner with client”, “How much on food this month?”, “Archive September”.</div>
+    <div class="hint">Tap the microphone button and speak (tap it again to stop; say “delete” to remove the last word), or use the microphone key on the keyboard. Check the text, then tap Add expense. Try: “Taxi 25 dollars by card yesterday”, “Coffee 450 and sandwich 520”, “Dinner 6000 yen memo team dinner with client”, “How much on food this month?”, “Archive September”.</div>
   </form>
   ${pend}${ans}
   <section class="card"><div class="top"><h2>Recent</h2>${S.expenses.length > 6 ? '<button class="link" id="seeAll">See all</button>' : ""}</div>
