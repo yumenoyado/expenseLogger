@@ -589,17 +589,30 @@ function startCountdown() {
 // ---------- speech (best effort; iPhone keyboard dictation always works) ----------
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null, listening = false, speechBroken = false;
+// Voice fills the box only. Nothing is saved until you tap Add expense.
+function stopMic() { if (rec && listening) { try { rec.stop(); } catch (e) {} } listening = false; updateMic(); }
 function toggleMic() {
   if (!SR || speechBroken) return;
-  if (listening) { rec && rec.stop(); return; }
+  if (listening) { stopMic(); return; }
   try {
-    rec = new SR(); rec.lang = "en-US"; rec.interimResults = true; rec.continuous = false;
-    const ta = $("#say");
-    rec.onresult = ev => { let s = ""; for (const r of ev.results) s += r[0].transcript; ta.value = s; if (ev.results[ev.results.length-1].isFinal) { listening = false; updateMic(); submitText(s); } };
-    rec.onerror = () => { speechBroken = true; listening = false; updateMic(); toast("Use the microphone key on your keyboard to speak."); ta.focus(); };
+    const box = $("#say");
+    const prefix = box && box.value.trim() ? box.value.trim() + " " : "";
+    rec = new SR(); rec.lang = "en-US"; rec.interimResults = true; rec.continuous = true;
+    rec.onresult = ev => {
+      let s = "";
+      for (const r of ev.results) s += r[0].transcript;
+      const ta = $("#say"); if (ta) ta.value = prefix + s.trim();
+    };
+    rec.onerror = ev => {
+      const code = ev && ev.error;
+      if (code === "not-allowed" || code === "service-not-allowed" || code === "audio-capture") {
+        speechBroken = true; toast("The microphone isn't available. Use the microphone key on your keyboard instead."); const ta = $("#say"); if (ta) ta.focus();
+      }
+      listening = false; updateMic();
+    };
     rec.onend = () => { listening = false; updateMic(); };
     rec.start(); listening = true; updateMic();
-  } catch (e) { speechBroken = true; updateMic(); $("#say").focus(); }
+  } catch (e) { speechBroken = true; updateMic(); const ta = $("#say"); if (ta) ta.focus(); }
 }
 function updateMic() { const b = $("#micBtn"); if (!b) return; b.classList.toggle("on", listening); b.hidden = !SR || speechBroken; b.setAttribute("aria-label", listening ? "Stop listening" : "Start listening"); }
 
@@ -649,7 +662,7 @@ function viewLog() {
       <button type="button" class="mic" id="micBtn" aria-label="Start listening" hidden>${ICONS.log}</button>
     </div>
     <div class="row"><button class="primary grow" type="submit">Add expense</button></div>
-    <div class="hint">Tap the microphone button and speak, or tap the box and use the microphone key on the keyboard. Try: “Taxi 25 dollars by card yesterday”, “Coffee 450 and sandwich 520”, “How much on food this month?”, “Archive September”.</div>
+    <div class="hint">Tap the microphone button and speak (tap it again to stop), or use the microphone key on the keyboard. Check the text, then tap Add expense. Try: “Taxi 25 dollars by card yesterday”, “Coffee 450 and sandwich 520”, “How much on food this month?”, “Archive September”.</div>
   </form>
   ${pend}${ans}
   <section class="card"><div class="top"><h2>Recent</h2>${S.expenses.length > 6 ? '<button class="link" id="seeAll">See all</button>' : ""}</div>
@@ -689,7 +702,7 @@ function pendingForm(p, i) {
 }
 function bindLog(root) {
   const form = $("#sayForm"), ta = $("#say");
-  form.onsubmit = ev => { ev.preventDefault(); const v = ta.value; clearSay(); submitText(v); };
+  form.onsubmit = ev => { ev.preventDefault(); stopMic(); const v = $("#say").value; clearSay(); submitText(v); };
   ta.onkeydown = ev => { if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); form.requestSubmit(); } };
   $("#micBtn").onclick = toggleMic; updateMic();
   const sa = $("#seeAll"); if (sa) sa.onclick = () => { S.tab = "history"; render(); };
