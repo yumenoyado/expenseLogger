@@ -543,10 +543,22 @@ async function savePending() {
   } catch (e) { onDbErr(e); }
   S.pending = []; S.editingPending = false;
   render();
+  clearSay();
   if (ids.length) toast(ids.length === 1 ? "Saved" : `Saved ${ids.length} expenses`, {label:"Undo", run: async () => { for (const id of ids) await store.remove(id).catch(()=>{}); toast("Removed"); }});
+}
+// Empty the input box and end any keyboard dictation still running, so it is ready for the next item.
+function clearSay() {
+  const ta = $("#say");
+  if (!ta) return;
+  if (document.activeElement === ta) ta.blur();
+  ta.value = "";
+  // iPhone dictation can insert its last words a moment after the box is cleared.
+  setTimeout(() => { const t = $("#say"); if (t && document.activeElement !== t) t.value = ""; }, 400);
+  setTimeout(() => { const t = $("#say"); if (t && document.activeElement !== t) t.value = ""; }, 1200);
 }
 async function submitText(text) {
   text = (text || "").trim();
+  clearSay();
   if (!text) return;
   S.answer = null;
   if (tryCommand(text)) { const ta = $("#say"); if (ta) ta.value = ""; return; }
@@ -677,7 +689,7 @@ function pendingForm(p, i) {
 }
 function bindLog(root) {
   const form = $("#sayForm"), ta = $("#say");
-  form.onsubmit = ev => { ev.preventDefault(); const v = ta.value; ta.value = ""; submitText(v); };
+  form.onsubmit = ev => { ev.preventDefault(); const v = ta.value; clearSay(); submitText(v); };
   ta.onkeydown = ev => { if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); form.requestSubmit(); } };
   $("#micBtn").onclick = toggleMic; updateMic();
   const sa = $("#seeAll"); if (sa) sa.onclick = () => { S.tab = "history"; render(); };
