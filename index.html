@@ -351,8 +351,16 @@ function splitItems(text) {
   }
   return [text];
 }
-function parseInput(text, ctx) {
+// Everything after the word "memo" or "comment" is the memo, not part of the expense.
+function splitMemo(text) {
+  const m = /\b(memo|comment)\b[\s:,.\-]*/i.exec(text);
+  if (!m) return {main: text, memo: ""};
+  return {main: text.slice(0, m.index).trim().replace(/[\s,.;:\-]+$/, ""), memo: text.slice(m.index + m[0].length).trim()};
+}
+function parseInput(fullText, ctx) {
+  const {main: text, memo} = splitMemo(fullText);
   const items = splitItems(text).map(p => parseOne(p, ctx));
+  items.forEach(it => { it.memo = memo; });
   if (items.length > 1) {
     const whole = parseOne(text, ctx);
     for (const it of items) {
@@ -522,7 +530,7 @@ function buildExpense(p) {
     date: p.date, description: p.description || "", merchant: p.merchant || "", category: p.category || "Other",
     payment: p.payment || S.settings.lastPayment || "", originalAmount: Number(p.amount || 0), originalCurrency: cur,
     isBusiness: !!p.isBusiness, tags: [], trip: (S.settings.trip && cur === S.settings.trip.currency) ? S.settings.trip.name : "",
-    notes: "", rawTranscript: p.rawTranscript || "", source: p.source || "voice",
+    notes: p.memo || "", rawTranscript: p.rawTranscript || "", source: p.source || "voice",
     archivedAt: null, archiveFileId: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
   };
   return applyConversion(e);
@@ -552,18 +560,21 @@ function clearSay() {
   if (!ta) return;
   if (document.activeElement === ta) ta.blur();
   ta.value = "";
+  const mm = $("#memo"); if (mm) { if (document.activeElement === mm) mm.blur(); mm.value = ""; }
   // iPhone dictation can insert its last words a moment after the box is cleared.
   setTimeout(() => { const t = $("#say"); if (t && document.activeElement !== t) t.value = ""; }, 400);
   setTimeout(() => { const t = $("#say"); if (t && document.activeElement !== t) t.value = ""; }, 1200);
 }
-async function submitText(text) {
+async function submitText(text, typedMemo) {
   text = (text || "").trim();
+  typedMemo = (typedMemo || "").trim();
   clearSay();
   if (!text) return;
   S.answer = null;
   if (tryCommand(text)) { const ta = $("#say"); if (ta) ta.value = ""; return; }
   const ctx = {defaultCurrency: activeDefaultCurrency(today()), merchantMap: S.settings.merchantMap || {}, rates: (S.fx && S.fx.rates) || {}};
   const items = parseInput(text, ctx);
+  if (typedMemo) items.forEach(it => { it.memo = it.memo ? `${it.memo}. ${typedMemo}` : typedMemo; });
   const foreign = items.filter(i => i.currency !== "JPY" && !jpyPerUnit(i.currency, i.date));
   if (foreign.length) await Promise.race([Promise.all(foreign.map(i => ensureRateFor(i.date))), new Promise(r => setTimeout(r, 4000))]);
   S.pending = items.map(i => ({...i, key: uid()}));
@@ -635,7 +646,7 @@ function sumRange(from, to) { return S.expenses.filter(e => e.date >= from && e.
 function itemHTML(e) {
   const foreign = e.originalCurrency !== "JPY";
   const flags = [e.archivedAt ? '<span class="arch">archived</span>' : "", e.rateStatus === "provisional" ? '<span class="arch">rate pending</span>' : "", e.rateStatus === "missing" ? '<span class="arch">no rate</span>' : ""].join("");
-  return `<button class="item" data-id="${esc(e.id)}"><span class="ico">${CAT_ABBR[e.category] || "OT"}</span><span class="t"><div>${esc(e.description || e.category)}${flags}</div><div class="small muted">${esc([e.merchant, e.category, e.payment].filter(Boolean).join(" · "))}</div></span><span class="a"><div class="num">${e.amountJPY != null ? yen(e.amountJPY) : "—"}</div>${foreign ? `<div class="small muted num">${esc(fmtAmt(e.originalAmount, e.originalCurrency))}</div>` : ""}</span></button>`;
+  return `<button class="item" data-id="${esc(e.id)}"><span class="ico">${CAT_ABBR[e.category] || "OT"}</span><span class="t"><div>${esc(e.description || e.category)}${flags}</div><div class="small muted">${esc([e.merchant, e.category, e.payment].filter(Boolean).join(" · "))}</div>${e.notes ? `<div class="small muted" style="font-style:italic">${esc(e.notes)}</div>` : ""}</span><span class="a"><div class="num">${e.amountJPY != null ? yen(e.amountJPY) : "—"}</div>${foreign ? `<div class="small muted num">${esc(fmtAmt(e.originalAmount, e.originalCurrency))}</div>` : ""}</span></button>`;
 }
 function bindItems(root) { root.querySelectorAll(".item[data-id]").forEach(b => b.onclick = () => openEdit(b.dataset.id)); }
 
@@ -663,8 +674,9 @@ function viewLog() {
       <textarea id="say" class="grow" rows="2" placeholder="Lunch at Matsuya 980 yen" enterkeyhint="done"></textarea>
       <button type="button" class="mic" id="micBtn" aria-label="Start listening" hidden>${ICONS.log}</button>
     </div>
+    <input id="memo" placeholder="Memo (optional)" aria-label="Memo" enterkeyhint="done">
     <div class="row"><button class="primary grow" type="submit">Add expense</button></div>
-    <div class="hint">Tap the microphone button and speak (tap it again to stop), or use the microphone key on the keyboard. Check the text, then tap Add expense. Try: “Taxi 25 dollars by card yesterday”, “Coffee 450 and sandwich 520”, “How much on food this month?”, “Archive September”.</div>
+    <div class="hint">Tap the microphone button and speak (tap it again to stop), or use the microphone key on the keyboard. Check the text, then tap Add expense. Try: “Taxi 25 dollars by card yesterday”, “Coffee 450 and sandwich 520”, “Dinner 6000 yen memo team dinner with client”, “How much on food this month?”, “Archive September”.</div>
   </form>
   ${pend}${ans}
   <section class="card"><div class="top"><h2>Recent</h2>${S.expenses.length > 6 ? '<button class="link" id="seeAll">See all</button>' : ""}</div>
@@ -681,7 +693,7 @@ function pendingHTML() {
     ${S.pending.map(p => {
       const r = p.currency === "JPY" ? null : jpyPerUnit(p.currency, p.date);
       const jpy = p.currency === "JPY" ? p.amount : (r ? Math.round(p.amount * r.rate * (1 + Number(S.settings.cardFeePct||0)/100)) : null);
-      return `<div class="cline"><div><div><strong>${esc(p.description)}</strong></div><div class="meta"><span class="tag">${esc(p.category)}</span><span class="tag">${esc(dayLabel(p.date))}</span>${p.merchant ? `<span class="tag">${esc(p.merchant)}</span>` : ""}${p.payment ? `<span class="tag">${esc(p.payment)}</span>` : ""}${p.isBusiness ? '<span class="tag">Business</span>' : ""}${p.lowConfidence.includes("category") ? '<span class="tag warn">category guessed</span>' : ""}</div></div>
+      return `<div class="cline"><div><div><strong>${esc(p.description)}</strong></div><div class="meta"><span class="tag">${esc(p.category)}</span><span class="tag">${esc(dayLabel(p.date))}</span>${p.merchant ? `<span class="tag">${esc(p.merchant)}</span>` : ""}${p.payment ? `<span class="tag">${esc(p.payment)}</span>` : ""}${p.isBusiness ? '<span class="tag">Business</span>' : ""}${p.memo ? `<span class="tag">Memo: ${esc(p.memo)}</span>` : ""}${p.lowConfidence.includes("category") ? '<span class="tag warn">category guessed</span>' : ""}</div></div>
         <div style="text-align:right"><div class="camt">${jpy != null ? yen(jpy) : "—"}</div>${p.currency !== "JPY" ? `<div class="small muted num">${esc(fmtAmt(p.amount, p.currency))}${r ? ` · 1 ${p.currency} = ${r.rate.toFixed(r.rate < 10 ? 4 : 2)} JPY` : ""}</div>` : ""}</div></div>`;
     }).join("")}
     <div class="count"><i id="countBar"></i></div>
@@ -699,12 +711,13 @@ function pendingForm(p, i) {
     <label>Date<input type="date" data-f="date" value="${esc(p.date)}"></label>
     <label>Merchant<input data-f="merchant" value="${esc(p.merchant || "")}"></label>
     <label>Payment<input data-f="payment" value="${esc(p.payment || "")}" placeholder="Cash, Card, Suica…"></label>
+    <label class="full">Memo<input data-f="memo" value="${esc(p.memo || "")}" placeholder="Optional"></label>
     <label class="check full"><input type="checkbox" data-f="isBusiness" ${p.isBusiness ? "checked" : ""}> Business expense</label>
   </div>`;
 }
 function bindLog(root) {
   const form = $("#sayForm"), ta = $("#say");
-  form.onsubmit = ev => { ev.preventDefault(); stopMic(); const v = $("#say").value; clearSay(); submitText(v); };
+  form.onsubmit = ev => { ev.preventDefault(); stopMic(); const v = $("#say").value; const mv = $("#memo") ? $("#memo").value : ""; clearSay(); submitText(v, mv); };
   ta.onkeydown = ev => { if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); form.requestSubmit(); } };
   $("#micBtn").onclick = toggleMic; updateMic();
   const sa = $("#seeAll"); if (sa) sa.onclick = () => { S.tab = "history"; render(); };
@@ -802,7 +815,7 @@ function bindReports() {
 }
 
 // ---------- CSV ----------
-const COLS = ["Entry ID","Date","Description","Merchant","Category","Payment","Original amount","Original currency","Rate (JPY per unit)","Rate date","Rate status","JPY amount","Business","Trip","Notes","Transcript"];
+const COLS = ["Entry ID","Date","Description","Merchant","Category","Payment","Original amount","Original currency","Rate (JPY per unit)","Rate date","Rate status","JPY amount","Business","Trip","Memo","Transcript"];
 function rowOf(e) { return [e.id, e.date, e.description, e.merchant, e.category, e.payment, e.originalAmount, e.originalCurrency, e.exchangeRate != null ? Number(e.exchangeRate).toFixed(6) : "", e.rateDate || "", e.rateStatus || "", e.amountJPY ?? "", e.isBusiness ? "Yes" : "No", e.trip || "", e.notes || "", e.rawTranscript || ""]; }
 const csvCell = v => { const s = String(v ?? ""); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 const toCsv = rows => rows.map(r => r.map(csvCell).join(",")).join("\n");
@@ -840,7 +853,7 @@ async function exportBackup() {
   const data = {app: "voice-expense-logger", version: 1, exportedAt: new Date().toISOString(), expenses: S.expenses, settings: S.settings, archives: S.archives};
   await saveFile(`expense-backup-${today()}.json`, JSON.stringify(data), "application/json");
 }
-const FIELD_OF = {"entry id": "id", "date": "date", "description": "description", "merchant": "merchant", "category": "category", "payment": "payment", "original amount": "originalAmount", "original currency": "originalCurrency", "rate (jpy per unit)": "exchangeRate", "rate date": "rateDate", "rate status": "rateStatus", "jpy amount": "amountJPY", "business": "isBusiness", "trip": "trip", "notes": "notes", "transcript": "rawTranscript"};
+const FIELD_OF = {"entry id": "id", "date": "date", "description": "description", "merchant": "merchant", "category": "category", "payment": "payment", "original amount": "originalAmount", "original currency": "originalCurrency", "rate (jpy per unit)": "exchangeRate", "rate date": "rateDate", "rate status": "rateStatus", "jpy amount": "amountJPY", "business": "isBusiness", "trip": "trip", "notes": "notes", "memo": "notes", "transcript": "rawTranscript"};
 async function importFile(file) {
   const text = (await file.text()).replace(/^﻿/, "");
   const have = new Set(S.expenses.map(e => e.id));
@@ -1021,7 +1034,7 @@ async function appendToSheet(sheetId, rows) {
     const existing = new Set(((ids.values) || []).slice(1).map(r => r[0]));
     const fresh = rows.filter(e => !existing.has(e.id));
     skipped = rows.length - fresh.length;
-    const map = COLS.map(c => header.findIndex(h => String(h).trim().toLowerCase() === c.toLowerCase()));
+    const map = COLS.map(c => header.findIndex(h => { const x = String(h).trim().toLowerCase(); return x === c.toLowerCase() || (c === "Memo" && x === "notes"); }));
     newRows = fresh.map(e => { const r = rowOf(e); const out = header.map(() => ""); map.forEach((j, i) => { if (j >= 0) out[j] = r[i]; }); return out; });
   }
   if (newRows.length) await gfetch(base + encodeURIComponent("A1") + ":append?valueInputOption=RAW&insertDataOption=INSERT_ROWS", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({values: newRows})});
@@ -1095,7 +1108,7 @@ function renderSheet() {
       <label>Payment<input id="e_payment" value="${esc(e.payment)}"></label>
       <label>Trip / project<input id="e_trip" value="${esc(e.trip)}"></label>
       <label class="check" style="align-self:end;padding-bottom:10px"><input type="checkbox" id="e_isBusiness" ${e.isBusiness ? "checked" : ""}> Business</label>
-      <label class="full">Notes<input id="e_notes" value="${esc(e.notes)}"></label>
+      <label class="full">Memo<input id="e_notes" value="${esc(e.notes)}"></label>
       ${e.rawTranscript ? `<div class="full small muted">You said: “${esc(e.rawTranscript)}”</div>` : ""}
     </div>
     ${E.confirmDelete ? `<div class="banner" style="background:var(--bad-weak)">Delete this expense from the app? This can't be undone. Drive files are not affected.<div class="row" style="margin-top:8px"><button class="danger" id="sdel2">Delete</button><button id="sdelno">Keep it</button></div></div>` : ""}
@@ -1237,10 +1250,11 @@ function render() {
   const active = document.activeElement;
   const keepSay = active && active.id === "say" ? {v: active.value, s: active.selectionStart} : null;
   const sayVal = $("#say") ? $("#say").value : "";
+  const memoVal = $("#memo") ? $("#memo").value : "";
   renderTabs();
   $("#syncState").textContent = S.mode === "loading" ? "Loading…" : (S.fx ? `Rates ${S.fx.date}` : "No rates yet");
   const v = $("#view");
-  if (S.tab === "log") { v.innerHTML = viewLog(); bindLog(v); const ta = $("#say"); if (ta) { ta.value = sayVal; if (keepSay) { ta.focus(); try { ta.setSelectionRange(keepSay.s, keepSay.s); } catch (e) {} } } }
+  if (S.tab === "log") { v.innerHTML = viewLog(); bindLog(v); const ta = $("#say"); if (ta) { ta.value = sayVal; const mm = $("#memo"); if (mm) mm.value = memoVal; if (keepSay) { ta.focus(); try { ta.setSelectionRange(keepSay.s, keepSay.s); } catch (e) {} } } }
   else if (S.tab === "history") { v.innerHTML = viewHistory(); bindHistory(v); }
   else if (S.tab === "reports") { v.innerHTML = viewReports(); bindReports(v); }
   else if (S.tab === "archive") { v.innerHTML = viewArchive(); bindArchive(v); }
