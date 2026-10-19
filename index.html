@@ -1,0 +1,1189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Voice Expense Logger</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Expenses">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f4f6f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e131a" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<script src="config.js"></script>
+<style>
+/* Layout: one narrow column like a pocket ledger; input card on top, bottom tab bar. */
+:root{
+  --paper:#f4f6f9; --card:#ffffff; --ink:#16202c; --muted:#5b6777; --line:#dde2ea;
+  --accent:#1f4f8f; --accent-weak:#e5edf8; --on-accent:#ffffff;
+  --good:#2e7a4e; --warn:#a4620a; --bad:#b3261e; --warn-weak:#fbf0df; --bad-weak:#fbe7e5;
+  --f-display:"Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --f-body:"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-num:"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --r:14px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0e131a; --card:#171f29; --ink:#e7ecf2; --muted:#98a4b3; --line:#29333f;
+  --accent:#86aee8; --accent-weak:#1c2b40; --on-accent:#0e131a;
+  --good:#6cc08e; --warn:#e2a54b; --bad:#f08a80; --warn-weak:#33270f; --bad-weak:#3a1d1b; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0e131a; --card:#171f29; --ink:#e7ecf2; --muted:#98a4b3; --line:#29333f;
+  --accent:#86aee8; --accent-weak:#1c2b40; --on-accent:#0e131a;
+  --good:#6cc08e; --warn:#e2a54b; --bad:#f08a80; --warn-weak:#33270f; --bad-weak:#3a1d1b; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.45}
+.wrap{max-width:560px;margin:0 auto;padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));padding-block:12px 96px;display:flex;flex-direction:column;gap:14px}
+h1,h2,h3{margin:0;text-wrap:balance}
+h1{font-family:var(--f-display);font-size:22px;font-weight:700;letter-spacing:-.01em}
+h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)} .small{font-size:13px}
+.top{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.banner{border-radius:10px;padding:10px 12px;font-size:13px;background:var(--warn-weak);color:var(--ink);border:1px solid var(--line)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px}
+.totals{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tot{display:flex;flex-direction:column;gap:2px}
+.tot b{font-family:var(--f-num);font-size:22px;font-weight:500}
+.bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:8px}
+.bar i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.bar i.over{background:var(--bad)}
+/* entry */
+.entry{display:flex;flex-direction:column;gap:10px}
+textarea,input,select{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%;min-width:0}
+textarea{resize:none;min-height:64px;font-size:17px}
+textarea:focus,input:focus,select:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.grow{flex:1;min-width:0}
+button{font:inherit;cursor:pointer;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:9px 14px;font-weight:500}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+button.danger{color:var(--bad);border-color:var(--bad)}
+button.link{border:none;background:none;color:var(--accent);padding:4px 2px}
+button:disabled{opacity:.5;cursor:default}
+.mic{width:48px;height:48px;border-radius:50%;padding:0;display:grid;place-items:center;flex:none}
+.mic svg{width:22px;height:22px}
+.mic.on{background:var(--bad);border-color:var(--bad);color:#fff}
+.hint{font-size:12.5px;color:var(--muted)}
+.examples{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-size:12.5px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--muted);font-weight:400}
+/* confirm */
+.confirm{border:2px solid var(--accent);background:var(--card);border-radius:var(--r);padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.cline{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.camt{font-family:var(--f-num);font-size:24px}
+.meta{display:flex;flex-wrap:wrap;gap:6px}
+.tag{font-size:12px;padding:2px 8px;border-radius:999px;background:var(--accent-weak);color:var(--ink)}
+.tag.warn{background:var(--warn-weak)} .tag.bad{background:var(--bad-weak)}
+.count{height:3px;background:var(--line);border-radius:2px;overflow:hidden}
+.count i{display:block;height:100%;background:var(--accent);width:100%}
+/* lists */
+.list{display:flex;flex-direction:column}
+.item{display:grid;grid-template-columns:34px 1fr auto;gap:10px;align-items:center;padding:10px 2px;border-top:1px solid var(--line);cursor:pointer;background:none;border-left:none;border-right:none;border-bottom:none;border-radius:0;text-align:left;width:100%;font-weight:400}
+.item:first-child{border-top:none}
+.ico{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-size:12px;font-weight:600;background:var(--accent-weak);color:var(--accent)}
+.item .t{min-width:0}
+.item .t div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item .a{text-align:right}
+.day{display:flex;justify-content:space-between;padding:14px 2px 4px;font-size:13px;color:var(--muted);font-weight:600}
+.arch{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:0 5px;margin-left:6px}
+.empty{padding:22px 8px;text-align:center;color:var(--muted)}
+/* reports */
+.cat{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;padding:6px 0}
+.cat .bar{grid-column:1 / -1;margin-top:2px}
+.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.seg button{border:none;border-radius:0;flex:1;padding:8px 6px;font-size:13px}
+.seg button.on{background:var(--accent);color:var(--on-accent)}
+.spark{width:100%;height:70px;display:block}
+/* sheet */
+.sheet-bg{position:fixed;inset:0;background:rgba(10,15,22,.45);z-index:30;display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--paper);width:100%;max-width:560px;max-height:88%;overflow:auto;border-radius:18px 18px 0 0;padding:16px max(16px, env(safe-area-inset-left, 0px)) calc(20px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-right, 0px));display:flex;flex-direction:column;gap:12px}
+.form{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.form label{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--muted);min-width:0}
+.form .full{grid-column:1 / -1}
+.check{flex-direction:row!important;align-items:center;gap:8px!important;color:var(--ink)!important;font-size:14px!important}
+.check input{width:auto}
+.pick{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--card)}
+.pick button{border:none;border-top:1px solid var(--line);border-radius:0;text-align:left;font-weight:400;display:flex;justify-content:space-between;gap:8px}
+.pick button:first-child{border-top:none}
+.pick button.sel{background:var(--accent-weak)}
+.crumbs{font-size:13px;display:flex;gap:4px;flex-wrap:wrap;align-items:center}
+/* tabs */
+nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--card);border-top:1px solid var(--line);display:flex;justify-content:center;padding:6px max(16px, env(safe-area-inset-right, 0px)) calc(6px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px))}
+nav.tabs .in{display:flex;max-width:560px;width:100%}
+nav.tabs button{flex:1;border:none;background:none;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11.5px;padding:6px 2px;font-weight:500}
+nav.tabs button svg{width:22px;height:22px}
+nav.tabs button.on{color:var(--accent)}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(76px + env(safe-area-inset-bottom, 0px));z-index:40;background:var(--ink);color:var(--paper);border-radius:12px;padding:10px 14px;display:flex;gap:14px;align-items:center;font-size:14px;max-width:calc(100% - 32px)}
+.toast button{background:none;border:none;color:var(--paper);text-decoration:underline;padding:0}
+.answer{background:var(--accent-weak);border-radius:var(--r);padding:12px 14px}
+.answer b{font-family:var(--f-num);font-size:20px;font-weight:500}
+.status-ok{color:var(--good)} .status-err{color:var(--bad)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+html{color-scheme:light}
+:root{padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;-webkit-text-size-adjust:100%}
+[hidden]{display:none!important}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style>
+</head>
+<body>
+
+<div class="wrap" id="app">
+  <div class="top"><h1>Voice Expense Logger</h1><span class="small muted" id="syncState">Loading…</span></div>
+  <div id="view"></div>
+</div>
+<nav class="tabs"><div class="in" id="tabs"></div></nav>
+<div id="overlay"></div>
+<div id="toastHost"></div>
+
+<script>
+(() => {
+"use strict";
+// ---------- constants ----------
+const CATS = ["Food & Drink","Groceries","Transport","Travel","Shopping","Bills & Utilities","Housing","Health","Entertainment","Education","Gifts","Business","Other"];
+const CAT_ABBR = {"Food & Drink":"FD","Groceries":"GR","Transport":"TR","Travel":"TV","Shopping":"SH","Bills & Utilities":"BU","Housing":"HO","Health":"HE","Entertainment":"EN","Education":"ED","Gifts":"GI","Business":"BZ","Other":"OT"};
+const CAT_WORDS = {
+  "Food & Drink":["lunch","dinner","breakfast","brunch","coffee","cafe","café","starbucks","doutor","tully","restaurant","ramen","sushi","beer","drinks","drink","bar","izakaya","snack","snacks","matsuya","yoshinoya","sukiya","mcdonald","mcdonalds","tea","bento","meal","food","pizza","burger","udon","soba","curry","konbini","convenience store","7-eleven","seven eleven","7 eleven","lawson","familymart","family mart","bakery","dessert","cake","juice","water bottle","sandwich","onigiri","noodles","salad","chicken","steak","wine","sake","gyudon","takeout","uber eats","lunch box"],
+  "Groceries":["grocery","groceries","supermarket","aeon","seiyu","ok store","ito yokado","vegetables","fruit","milk","rice","eggs","bread","costco","gyomu"],
+  "Transport":["taxi","uber","cab","train","jr","metro","subway","bus","suica charge","suica top","pasmo","shinkansen","fuel","gasoline","petrol","gas station","parking","toll","highway","bike","scooter","fare"],
+  "Travel":["hotel","flight","airbnb","airline","ryokan","visa fee","airport","luggage","tour","booking","hostel"],
+  "Shopping":["amazon","rakuten","uniqlo","gu","clothes","shirt","shoes","electronics","bic camera","yodobashi","daiso","muji","don quijote","donki","shopping","charger","cable","bag","nitori"],
+  "Bills & Utilities":["electricity","electric bill","gas bill","water bill","internet","phone bill","mobile","wifi","netflix","spotify","subscription","insurance","icloud","utility","utilities","nhk"],
+  "Housing":["rent","mortgage","furniture","repair","cleaning","maintenance","management fee"],
+  "Health":["pharmacy","drugstore","drug store","medicine","doctor","clinic","hospital","dentist","gym","massage","vitamins","matsumoto kiyoshi"],
+  "Entertainment":["movie","cinema","concert","game","games","karaoke","museum","zoo","theater","theatre","show","tickets","golf"],
+  "Education":["book","books","course","class","tuition","school","seminar","udemy","textbook","kindle"],
+  "Gifts":["gift","present","donation","omiyage","souvenir","flowers","wedding","birthday"]
+};
+const CUR_WORDS = [
+  ["australian dollars","AUD"],["australian dollar","AUD"],["singapore dollars","SGD"],["singapore dollar","SGD"],["hong kong dollars","HKD"],["hong kong dollar","HKD"],["canadian dollars","CAD"],["canadian dollar","CAD"],["new zealand dollars","NZD"],["us dollars","USD"],["us dollar","USD"],
+  ["japanese yen","JPY"],["yen","JPY"],["jpy","JPY"],["dollars","USD"],["dollar","USD"],["bucks","USD"],["usd","USD"],["euros","EUR"],["euro","EUR"],["eur","EUR"],["pounds","GBP"],["pound","GBP"],["quid","GBP"],["gbp","GBP"],
+  ["baht","THB"],["rupees","INR"],["rupee","INR"],["inr","INR"],["won","KRW"],["yuan","CNY"],["rmb","CNY"],["renminbi","CNY"],["ringgit","MYR"],["pesos","PHP"],["peso","PHP"],["francs","CHF"],["franc","CHF"],["rupiah","IDR"],["krona","SEK"],["kronor","SEK"],["lira","TRY"],["rand","ZAR"],["reais","BRL"]
+];
+const CUR_SYMBOLS = {"¥":"JPY","円":"JPY","$":"USD","€":"EUR","£":"GBP","₹":"INR","₩":"KRW","฿":"THB"};
+const CUR_DEC = {JPY:0,KRW:0,IDR:0,HUF:0,ISK:0};
+const PAYMENTS = [["credit card","Card"],["debit card","Card"],["apple pay","Apple Pay"],["paypay","PayPay"],["suica","Suica"],["pasmo","PASMO"],["ic card","IC card"],["bank transfer","Bank transfer"],["transfer","Bank transfer"],["cash","Cash"],["card","Card"],["visa","Card"],["mastercard","Card"]];
+const MONTHS = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+const MON_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const WEEKDAYS = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+const DRIVE = "Google Drive";
+const DEFAULT_SETTINGS = {defaultCurrency:"JPY", trip:null, cardFeePct:0, autoSaveSecs:3, monthlyBudget:0, archiveDest:null, merchantMap:{}, lastPayment:""};
+
+// ---------- state ----------
+const S = { mode:"loading", expenses:[], settings:{...DEFAULT_SETTINGS}, fx:null, fxdays:[], archives:[], tab:"log", pending:[], editingPending:false, answer:null, histQuery:"", histCat:"", repMonth:null, toast:null };
+let store = null;
+
+// ---------- helpers ----------
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const isStandalone = window.navigator.standalone === true || (window.matchMedia && matchMedia("(display-mode: standalone)").matches);
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pad = n => String(n).padStart(2,"0");
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const today = () => ymd(new Date());
+const parseYmd = s => { const [y,m,d] = s.split("-").map(Number); return new Date(y, m-1, d); };
+const addDays = (s, n) => { const d = parseYmd(s); d.setDate(d.getDate()+n); return ymd(d); };
+const dayDiff = (a, b) => Math.round((parseYmd(a) - parseYmd(b)) / 864e5);
+const monthKey = s => s.slice(0,7);
+const monthLabel = k => { const [y,m] = k.split("-").map(Number); return `${MON_SHORT[m-1]} ${y}`; };
+const dayLabel = s => { const d = parseYmd(s); const t = today(); if (s === t) return "Today"; if (s === addDays(t,-1)) return "Yesterday"; return `${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getDay()]} ${d.getDate()} ${MON_SHORT[d.getMonth()]}${d.getFullYear() !== new Date().getFullYear() ? " " + d.getFullYear() : ""}`; };
+const yen = n => "¥" + Math.round(n || 0).toLocaleString("en-US");
+const fmtAmt = (a, c) => { const dec = CUR_DEC[c] ?? 2; const v = Number(a || 0).toLocaleString("en-US", {minimumFractionDigits:dec, maximumFractionDigits:dec}); return c === "JPY" ? "¥" + v : `${v} ${c}`; };
+const titleCase = s => s.replace(/\b([a-z])/g, (m, c) => c.toUpperCase());
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+function toast(msg, action) {
+  clearTimeout(S.toastTimer);
+  S.toast = {msg, action};
+  renderToast();
+  S.toastTimer = setTimeout(() => { S.toast = null; renderToast(); }, action ? 10000 : 3500);
+}
+function renderToast() {
+  const h = $("#toastHost");
+  if (!S.toast) { h.innerHTML = ""; return; }
+  h.innerHTML = `<div class="toast" role="status"><span>${esc(S.toast.msg)}</span>${S.toast.action ? `<button id="toastAct">${esc(S.toast.action.label)}</button>` : ""}</div>`;
+  if (S.toast.action) $("#toastAct").onclick = () => { const a = S.toast.action; S.toast = null; renderToast(); a.run(); };
+}
+
+// ---------- rates ----------
+function jpyPerUnit(cur, onDate) {
+  if (cur === "JPY") return {rate:1, date:onDate, status:"final", source:"—"};
+  let best = null;
+  for (const d of S.fxdays) if (d.date <= onDate && d.rates && d.rates[cur] && d.rates.JPY && (!best || d.date > best.date)) best = d;
+  if (!best && S.fx && S.fx.rates && S.fx.rates[cur] && S.fx.rates.JPY) best = S.fx;
+  if (!best) return null;
+  const rate = best.rates.JPY / best.rates[cur];
+  const gap = dayDiff(onDate, best.date);
+  return {rate, date:best.date, status: gap > 4 || gap < 0 ? "provisional" : "final", source: best.source || "ECB reference rate"};
+}
+function knownCurrencies() {
+  const set = new Set(["JPY"]);
+  if (S.fx && S.fx.rates) Object.keys(S.fx.rates).forEach(c => set.add(c));
+  ["USD","EUR","GBP","AUD","CAD","CHF","CNY","HKD","INR","KRW","SGD","THB"].forEach(c => set.add(c));
+  return [...set].sort((a,b) => a === "JPY" ? -1 : b === "JPY" ? 1 : a.localeCompare(b));
+}
+function applyConversion(e) {
+  if (e.rateStatus === "statement" || e.rateStatus === "manual") return e;
+  const r = jpyPerUnit(e.originalCurrency, e.date);
+  if (!r) { e.exchangeRate = null; e.rateDate = null; e.rateStatus = "missing"; e.amountJPY = null; return e; }
+  const fee = e.originalCurrency === "JPY" ? 0 : Number(S.settings.cardFeePct || 0);
+  e.exchangeRate = r.rate; e.rateDate = r.date; e.rateStatus = r.status; e.rateSource = r.source;
+  e.amountJPY = Math.round(e.originalAmount * r.rate * (1 + fee/100));
+  return e;
+}
+
+// ---------- parser ----------
+const NUMW = {zero:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19,twenty:20,thirty:30,forty:40,fifty:50,sixty:60,seventy:70,eighty:80,ninety:90};
+const SCALE = {hundred:100,thousand:1000,million:1e6};
+function wordsToDigits(text) {
+  const toks = text.split(/(\s+|-)/);
+  const out = []; let i = 0;
+  while (i < toks.length) {
+    const w = toks[i].toLowerCase();
+    if (w in NUMW || ((w === "a") && toks[i+2] && toks[i+2].toLowerCase() in SCALE)) {
+      let total = 0, cur = 0, j = i, used = false, last = i;
+      while (j < toks.length) {
+        const t = toks[j].toLowerCase();
+        if (/^\s+$|^-$/.test(t)) { j++; continue; }
+        if (t in NUMW) { cur += NUMW[t]; used = true; last = j; j++; continue; }
+        if (t === "a" && toks[j+2] && toks[j+2].toLowerCase() in SCALE) { cur += 1; last = j; j++; continue; }
+        if (t in SCALE && used || (t in SCALE && cur)) { if (SCALE[t] === 100) cur *= 100; else { total += cur * SCALE[t]; cur = 0; } used = true; last = j; j++; continue; }
+        if (t === "and" && used && toks[j+2] && toks[j+2].toLowerCase() in NUMW) { j++; continue; }
+        break;
+      }
+      if (used) {
+        let val = total + cur, k = last + 1;
+        // "point five"
+        if (toks[k+1] && toks[k+1].toLowerCase() === "point" && toks[k+3] && toks[k+3].toLowerCase() in NUMW) { val = Number(`${val}.${NUMW[toks[k+3].toLowerCase()]}`); last = k + 3; }
+        out.push(String(val)); i = last + 1; continue;
+      }
+    }
+    out.push(toks[i]); i++;
+  }
+  return out.join("");
+}
+function extractDate(t) {
+  const now = today();
+  const rules = [
+    [/\bday before yesterday\b/, () => addDays(now,-2)],
+    [/\byesterday\b/, () => addDays(now,-1)],
+    [/\btoday\b|\bthis (?:morning|afternoon|evening)\b|\btonight\b/, () => now],
+    [/\b(\d{1,2}) days? ago\b/, m => addDays(now, -Number(m[1]))],
+    [/\b(?:last|on|this past)\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/, m => { const target = WEEKDAYS.indexOf(m[1]); const d = parseYmd(now); let back = (d.getDay() - target + 7) % 7; if (back === 0) back = 7; return addDays(now, -back); }],
+    [/\b(\d{4})-(\d{2})-(\d{2})\b/, m => `${m[1]}-${m[2]}-${m[3]}`],
+    [new RegExp(`\\b(?:on\\s+)?(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(${MONTHS.join("|")}|${MON_SHORT.map(s=>s.toLowerCase()).join("|")})\\b`), m => mkDate(Number(m[1]), m[2])],
+    [new RegExp(`\\b(?:on\\s+)?(${MONTHS.join("|")}|${MON_SHORT.map(s=>s.toLowerCase()).join("|")})\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`), m => mkDate(Number(m[2]), m[1])]
+  ];
+  function mkDate(day, mon) {
+    const mi = MONTHS.findIndex(x => x.startsWith(mon.slice(0,3)));
+    const n = parseYmd(now); let y = n.getFullYear();
+    let s = `${y}-${pad(mi+1)}-${pad(day)}`;
+    if (s > now) s = `${y-1}-${pad(mi+1)}-${pad(day)}`;
+    return s;
+  }
+  for (const [re, fn] of rules) { const m = t.match(re); if (m) return {date: fn(m), rest: t.replace(m[0], " ")}; }
+  return {date: null, rest: t};
+}
+function parseOne(raw, ctx) {
+  const original = raw.trim();
+  const res = {rawTranscript: original};
+  let src = original;
+  const brand = src.match(/\b(?:seven|7)[\s-]?eleven\b/i);
+  if (brand) { res.merchant = "7-Eleven"; src = src.replace(brand[0], " "); }
+  let t = " " + wordsToDigits(src).toLowerCase() + " ";
+  // date
+  const d = extractDate(t); t = d.rest; res.date = d.date || today();
+  // payment
+  for (const [w, p] of PAYMENTS) { const re = new RegExp(`\\b(?:(?:paid|pay)\\s+)?(?:by|with|using|via|on)?\\s*(?:my\\s+)?${w.replace(/ /g,"\\s+")}\\b`); const m = t.match(re); if (m) { res.payment = p; t = t.replace(m[0], " "); break; } }
+  // business
+  if (/\b(business|for work|work expense|client)\b/.test(t)) { res.isBusiness = true; t = t.replace(/\b(business expense|business|for work|work expense)\b/g, " "); }
+  // currency words (longest first)
+  let curPos = -1;
+  for (const [w, c] of CUR_WORDS) { const re = new RegExp(`\\b${w}\\b`); const m = re.exec(t); if (m) { res.currency = c; curPos = m.index; t = t.slice(0, m.index) + " ".repeat(m[0].length) + t.slice(m.index + m[0].length); break; } }
+  if (!res.currency) { const codes = Object.keys(ctx.rates || {}).filter(c => c !== "TRY"); for (const c of codes) { const re = new RegExp(`\\b${c.toLowerCase()}\\b`); const m = re.exec(t); if (m) { res.currency = c; curPos = m.index; t = t.slice(0, m.index) + " ".repeat(m[0].length) + t.slice(m.index + m[0].length); break; } } }
+  // amounts
+  const amtRe = /([¥円$€£₹₩฿])?\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?\s?(k\b|円)?/g;
+  const cands = []; let m;
+  while ((m = amtRe.exec(t))) {
+    let v = Number(m[2].replace(/,/g,"") + (m[3] ? "." + m[3] : ""));
+    if (m[4] === "k") v *= 1000;
+    const sym = m[1] || (m[4] === "円" ? "円" : null);
+    cands.push({v, sym, idx:m.index, len:m[0].length, near: curPos >= 0 ? Math.min(Math.abs(curPos - (m.index + m[0].length)), Math.abs(curPos - m.index)) : 999});
+  }
+  let pick = null;
+  if (cands.length) {
+    pick = cands.find(c => c.sym) || (curPos >= 0 ? [...cands].sort((a,b) => a.near - b.near)[0] : cands[cands.length-1]);
+    if (pick.sym && !res.currency) res.currency = CUR_SYMBOLS[pick.sym];
+    res.amount = pick.v;
+    t = t.slice(0, pick.idx) + " ".repeat(pick.len) + t.slice(pick.idx + pick.len);
+  }
+  if (!res.currency) res.currency = ctx.defaultCurrency;
+  // merchant
+  const mm = t.match(/\b(?:at|from)\s+([a-z0-9'&.\-]+(?:\s+[a-z0-9'&.\-]+){0,3}?)(?=\s+(?:for|on|in|and|with|to|near)\b|\s*$)/);
+  if (mm && !res.merchant) { res.merchant = titleCase(mm[1].trim()); t = t.replace(mm[0], " "); }
+  // description
+  const stop = /\b(i|i've|ive|just|spent|spend|paid|pay|bought|buy|got|for|on|a|an|the|of|was|it|cost|costs|costing|total|about|around|some|my|me|to|in|and|log|add|expense|please|worth)\b/g;
+  let desc = t.replace(stop, " ").replace(/[.,!?;:]/g, " ").replace(/\s+/g, " ").trim();
+  // category
+  const lowAll = " " + original.toLowerCase() + " ";
+  let cat = null;
+  if (res.merchant && ctx.merchantMap[res.merchant.toLowerCase()]) cat = ctx.merchantMap[res.merchant.toLowerCase()];
+  if (!cat) {
+    outer: for (const c of Object.keys(CAT_WORDS)) for (const w of CAT_WORDS[c]) if (new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}\\b`).test(lowAll)) { cat = c; break outer; }
+  }
+  if (!cat && res.isBusiness) cat = "Business";
+  res.category = cat || "Other";
+  res.description = desc ? desc.charAt(0).toUpperCase() + desc.slice(1) : (res.merchant || res.category);
+  res.lowConfidence = [];
+  if (res.amount == null) res.lowConfidence.push("amount");
+  if (!cat) res.lowConfidence.push("category");
+  return res;
+}
+function splitItems(text) {
+  const parts = text.split(/\s*(?:,\s+|\s+and\s+|\s+plus\s+|\s+then\s+|;)\s*/i).filter(Boolean);
+  const withNum = parts.filter(p => /\d|\b(one|two|three|four|five|six|seven|eight|nine|ten|twenty|thirty|forty|fifty|hundred|thousand)\b/i.test(p));
+  if (parts.length > 1 && withNum.length === parts.length) {
+    // carry shared context (date / currency / payment words) from the full sentence
+    return parts;
+  }
+  return [text];
+}
+function parseInput(text, ctx) {
+  const items = splitItems(text).map(p => parseOne(p, ctx));
+  if (items.length > 1) {
+    const whole = parseOne(text, ctx);
+    for (const it of items) {
+      if (!/\b(yesterday|today|ago|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(it.rawTranscript)) it.date = whole.date;
+      if (!it.payment && whole.payment) it.payment = whole.payment;
+      if (it.currency === ctx.defaultCurrency && whole.currency !== ctx.defaultCurrency) {
+        const hasOwn = CUR_WORDS.some(([w]) => new RegExp(`\\b${w}\\b`, "i").test(it.rawTranscript)) || /[¥$€£₹₩฿円]/.test(it.rawTranscript);
+        if (!hasOwn) it.currency = whole.currency;
+      }
+    }
+  }
+  return items;
+}
+function activeDefaultCurrency(onDate) {
+  const tr = S.settings.trip;
+  if (tr && tr.currency && (!tr.start || onDate >= tr.start) && (!tr.end || onDate <= tr.end)) return tr.currency;
+  return S.settings.defaultCurrency || "JPY";
+}
+
+// ---------- questions & commands ----------
+function periodFromText(t) {
+  const now = today(), n = parseYmd(now);
+  if (/\btoday\b/.test(t)) return {from:now, to:now, label:"today"};
+  if (/\byesterday\b/.test(t)) return {from:addDays(now,-1), to:addDays(now,-1), label:"yesterday"};
+  if (/\bthis week\b/.test(t)) { const back = (n.getDay()+6)%7; return {from:addDays(now,-back), to:now, label:"this week"}; }
+  if (/\blast week\b/.test(t)) { const back = (n.getDay()+6)%7; return {from:addDays(now,-back-7), to:addDays(now,-back-1), label:"last week"}; }
+  if (/\blast month\b/.test(t)) { const d = new Date(n.getFullYear(), n.getMonth()-1, 1); const e = new Date(n.getFullYear(), n.getMonth(), 0); return {from:ymd(d), to:ymd(e), label:"last month", month:ymd(d).slice(0,7)}; }
+  if (/\bthis year\b/.test(t)) return {from:`${n.getFullYear()}-01-01`, to:now, label:"this year"};
+  for (let i = 0; i < 12; i++) if (new RegExp(`\\b${MONTHS[i]}\\b`).test(t)) { let y = n.getFullYear(); if (i > n.getMonth()) y--; const e = new Date(y, i+1, 0); return {from:`${y}-${pad(i+1)}-01`, to:ymd(e), label:`${titleCase(MONTHS[i])} ${y}`, month:`${y}-${pad(i+1)}`}; }
+  const d = new Date(n.getFullYear(), n.getMonth(), 1);
+  return {from:ymd(d), to:now, label:"this month", month:now.slice(0,7)};
+}
+function tryCommand(text) {
+  const t = text.toLowerCase().trim();
+  if (/^(archive|export)\b/.test(t)) {
+    const p = /\b(all|everything)\b/.test(t) ? null : periodFromText(t);
+    openArchive(p && p.month ? p.month : (p ? null : "all"));
+    return true;
+  }
+  if (/^(how much|what did i spend|what have i spent|what'?s my total|show (me )?(my )?(total|spending))/.test(t)) {
+    const p = periodFromText(t);
+    let cat = null;
+    outer: for (const c of CATS) { if (t.includes(c.toLowerCase().split(" ")[0])) { cat = c; break; } for (const w of (CAT_WORDS[c] || [])) if (new RegExp(`\\b${w}\\b`).test(t)) { cat = c; break outer; } }
+    const rows = S.expenses.filter(e => e.date >= p.from && e.date <= p.to && (!cat || e.category === cat));
+    const sum = rows.reduce((a, e) => a + (e.amountJPY || 0), 0);
+    S.answer = {q:text, sum, count:rows.length, label:`${cat ? cat + ", " : ""}${p.label}`};
+    S.pending = [];
+    render();
+    return true;
+  }
+  return false;
+}
+
+// ---------- storage (on this iPhone: IndexedDB, with localStorage fallback) ----------
+const IDB = {
+  db: null,
+  open() {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open("voice-expense-logger", 1);
+      r.onupgradeneeded = () => { const d = r.result; d.createObjectStore("expenses", {keyPath: "id"}); d.createObjectStore("kv"); };
+      r.onsuccess = () => { this.db = r.result; res(); };
+      r.onerror = () => rej(r.error);
+    });
+  },
+  req(store, mode, fn) {
+    return new Promise((res, rej) => {
+      const t = this.db.transaction(store, mode); const q = fn(t.objectStore(store));
+      t.oncomplete = () => res(q && "result" in q ? q.result : undefined);
+      t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
+    });
+  },
+  all(s) { return this.req(s, "readonly", st => st.getAll()); },
+  get(s, k) { return this.req(s, "readonly", st => st.get(k)); },
+  put(s, v, k) { return this.req(s, "readwrite", st => k === undefined ? st.put(v) : st.put(v, k)); },
+  del(s, k) { return this.req(s, "readwrite", st => st.delete(k)); }
+};
+async function makeIdbStore() {
+  await IDB.open();
+  S.expenses = await IDB.all("expenses");
+  S.settings = {...DEFAULT_SETTINGS, ...((await IDB.get("kv", "settings")) || {})};
+  S.archives = (await IDB.get("kv", "archives")) || [];
+  S.fxdays = Object.values((await IDB.get("kv", "fxdays")) || {});
+  S.fx = (await IDB.get("kv", "fxlatest")) || null;
+  return {
+    kind: "idb",
+    async add(e) { const id = e.id || uid(); const rec = {...e, id}; await IDB.put("expenses", rec); S.expenses.push(rec); render(); return id; },
+    async update(id, patch) { const i = S.expenses.findIndex(x => x.id === id); if (i < 0) return; const rec = {...S.expenses[i], ...patch}; await IDB.put("expenses", rec); S.expenses[i] = rec; liveRender(); },
+    async remove(id) { await IDB.del("expenses", id); S.expenses = S.expenses.filter(x => x.id !== id); render(); },
+    async saveSettings(patch) { S.settings = {...S.settings, ...patch}; await IDB.put("kv", S.settings, "settings"); liveRender(); },
+    async addArchive(a) { S.archives = [...S.archives, {id: uid(), ...a}]; await IDB.put("kv", S.archives, "archives"); liveRender(); },
+    async saveFx() { const m = {}; S.fxdays.forEach(d => m[d.date] = d); await IDB.put("kv", m, "fxdays"); await IDB.put("kv", S.fx, "fxlatest"); }
+  };
+}
+function makeLocalStore() {
+  const KEY = "vel.v1";
+  let data = {expenses: {}, settings: {}, archives: [], fxdays: {}, fx: null};
+  try { const raw = localStorage.getItem(KEY); if (raw) data = {...data, ...JSON.parse(raw)}; } catch (e) {}
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) { toast("Storage is full. Archive and delete old records."); } };
+  S.expenses = Object.values(data.expenses); S.settings = {...DEFAULT_SETTINGS, ...data.settings}; S.archives = data.archives || [];
+  S.fxdays = Object.values(data.fxdays || {}); S.fx = data.fx || null;
+  const sync = () => { data.expenses = {}; S.expenses.forEach(e => data.expenses[e.id] = e); save(); };
+  return {
+    kind: "local",
+    async add(e) { const id = e.id || uid(); S.expenses.push({...e, id}); sync(); render(); return id; },
+    async update(id, patch) { S.expenses = S.expenses.map(x => x.id === id ? {...x, ...patch} : x); sync(); liveRender(); },
+    async remove(id) { S.expenses = S.expenses.filter(x => x.id !== id); sync(); render(); },
+    async saveSettings(patch) { S.settings = {...S.settings, ...patch}; data.settings = S.settings; save(); liveRender(); },
+    async addArchive(a) { S.archives = [...S.archives, {id: uid(), ...a}]; data.archives = S.archives; save(); liveRender(); },
+    async saveFx() { data.fxdays = {}; S.fxdays.forEach(d => data.fxdays[d.date] = d); data.fx = S.fx; save(); }
+  };
+}
+function onDbErr(e) {
+  if (e && e.name === "QuotaExceededError") toast("Storage is full. Archive and delete old records to make room.");
+  else toast("That change could not be saved on this iPhone.");
+}
+
+// ---------- exchange rates (ECB reference rates via Frankfurter, fetched directly) ----------
+const FX_API = "https://api.frankfurter.dev/v1/";
+function addFxDay(doc) { S.fxdays = S.fxdays.filter(d => d.date !== doc.date).concat([doc]); }
+async function refreshRates(force) {
+  if (!force && S.fx && S.fx.fetchedAt && Date.now() - Date.parse(S.fx.fetchedAt) < 6 * 3600e3) return;
+  try {
+    const r = await fetch(FX_API + "latest?base=USD", {cache: "no-store"});
+    if (!r.ok) return;
+    const j = await r.json();
+    if (!j.rates || !j.rates.JPY) return;
+    const doc = {date: j.date, base: "USD", source: "ECB reference rates via Frankfurter", fetchedAt: new Date().toISOString(), rates: {...j.rates, USD: 1}};
+    S.fx = doc; addFxDay(doc); await store.saveFx(); liveRender(); recheckProvisional();
+  } catch (e) { /* offline: keep cached rates */ }
+}
+async function ensureRateFor(date) {
+  if (S.fxdays.some(d => d.date <= date && dayDiff(date, d.date) <= 4)) return true;
+  if (S.fx && date > S.fx.date) return false; // future of latest: provisional until published
+  try {
+    const r = await fetch(FX_API + date + "?base=USD");
+    if (!r.ok) return false;
+    const j = await r.json();
+    if (!j.rates || !j.rates.JPY) return false;
+    addFxDay({date: j.date, base: "USD", source: "ECB reference rates via Frankfurter", rates: {...j.rates, USD: 1}});
+    await store.saveFx();
+    return true;
+  } catch (e) { return false; }
+}
+let rechecking = false;
+async function recheckProvisional() {
+  if (rechecking || !store) return;
+  const todo = S.expenses.filter(e => e.rateStatus === "provisional" || (e.rateStatus === "missing" && e.originalCurrency !== "JPY"));
+  if (!todo.length) return;
+  rechecking = true;
+  try {
+    for (const e of todo) {
+      await ensureRateFor(e.date);
+      const r = jpyPerUnit(e.originalCurrency, e.date);
+      if (!r) continue;
+      if (e.rateStatus === "missing" || r.status === "final") {
+        const c = applyConversion({...e});
+        await store.update(e.id, {exchangeRate: c.exchangeRate, rateDate: c.rateDate, rateStatus: c.rateStatus, rateSource: c.rateSource || null, amountJPY: c.amountJPY, updatedAt: new Date().toISOString()});
+      }
+    }
+  } catch (e) {} finally { rechecking = false; }
+}
+
+// ---------- expense building / saving ----------
+function buildExpense(p) {
+  const cur = p.currency;
+  const e = {
+    date: p.date, description: p.description || "", merchant: p.merchant || "", category: p.category || "Other",
+    payment: p.payment || S.settings.lastPayment || "", originalAmount: Number(p.amount || 0), originalCurrency: cur,
+    isBusiness: !!p.isBusiness, tags: [], trip: (S.settings.trip && cur === S.settings.trip.currency) ? S.settings.trip.name : "",
+    notes: "", rawTranscript: p.rawTranscript || "", source: p.source || "voice",
+    archivedAt: null, archiveFileId: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+  };
+  return applyConversion(e);
+}
+async function savePending() {
+  const items = S.pending.filter(p => p.amount != null && p.amount > 0);
+  if (!items.length) return;
+  clearInterval(S.countTimer);
+  const ids = [];
+  try {
+    for (const p of items) {
+      const e = p.manualJPY != null ? {...buildExpense(p), amountJPY: Math.round(p.manualJPY), exchangeRate: p.manualJPY / p.amount, rateStatus: p.currency === "JPY" ? "final" : "manual", rateDate: p.date} : buildExpense(p);
+      ids.push(await store.add(e));
+      if (e.merchant && e.category && e.category !== "Other") S.settings.merchantMap = {...S.settings.merchantMap, [e.merchant.toLowerCase()]: e.category};
+    }
+    const last = items[items.length-1];
+    await store.saveSettings({merchantMap: S.settings.merchantMap, lastPayment: last.payment || S.settings.lastPayment || ""});
+  } catch (e) { onDbErr(e); }
+  S.pending = []; S.editingPending = false;
+  render();
+  if (ids.length) toast(ids.length === 1 ? "Saved" : `Saved ${ids.length} expenses`, {label:"Undo", run: async () => { for (const id of ids) await store.remove(id).catch(()=>{}); toast("Removed"); }});
+}
+async function submitText(text) {
+  text = (text || "").trim();
+  if (!text) return;
+  S.answer = null;
+  if (tryCommand(text)) { const ta = $("#say"); if (ta) ta.value = ""; return; }
+  const ctx = {defaultCurrency: activeDefaultCurrency(today()), merchantMap: S.settings.merchantMap || {}, rates: (S.fx && S.fx.rates) || {}};
+  const items = parseInput(text, ctx);
+  const foreign = items.filter(i => i.currency !== "JPY" && !jpyPerUnit(i.currency, i.date));
+  if (foreign.length) await Promise.race([Promise.all(foreign.map(i => ensureRateFor(i.date))), new Promise(r => setTimeout(r, 4000))]);
+  S.pending = items.map(i => ({...i, key: uid()}));
+  S.editingPending = false;
+  render();
+  startCountdown();
+}
+function startCountdown() {
+  clearInterval(S.countTimer);
+  if (S.pending.some(p => p.amount == null || p.currency !== "JPY" && !jpyPerUnit(p.currency, p.date) && p.manualJPY == null)) { S.editingPending = true; render(); return; }
+  const secs = Number(S.settings.autoSaveSecs || 3);
+  if (!secs) return;
+  const start = Date.now();
+  S.countTimer = setInterval(() => {
+    const el = $("#countBar");
+    const frac = 1 - (Date.now() - start) / (secs * 1000);
+    if (S.editingPending || !S.pending.length) { clearInterval(S.countTimer); return; }
+    if (el) el.style.width = Math.max(0, frac * 100) + "%";
+    if (frac <= 0) { clearInterval(S.countTimer); savePending(); }
+  }, 50);
+}
+
+// ---------- speech (best effort; iPhone keyboard dictation always works) ----------
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, listening = false, speechBroken = false;
+function toggleMic() {
+  if (!SR || speechBroken) return;
+  if (listening) { rec && rec.stop(); return; }
+  try {
+    rec = new SR(); rec.lang = "en-US"; rec.interimResults = true; rec.continuous = false;
+    const ta = $("#say");
+    rec.onresult = ev => { let s = ""; for (const r of ev.results) s += r[0].transcript; ta.value = s; if (ev.results[ev.results.length-1].isFinal) { listening = false; updateMic(); submitText(s); } };
+    rec.onerror = () => { speechBroken = true; listening = false; updateMic(); toast("Use the microphone key on your keyboard to speak."); ta.focus(); };
+    rec.onend = () => { listening = false; updateMic(); };
+    rec.start(); listening = true; updateMic();
+  } catch (e) { speechBroken = true; updateMic(); $("#say").focus(); }
+}
+function updateMic() { const b = $("#micBtn"); if (!b) return; b.classList.toggle("on", listening); b.hidden = !SR || speechBroken; b.setAttribute("aria-label", listening ? "Stop listening" : "Start listening"); }
+
+// ---------- render ----------
+const ICONS = {
+  log:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
+  history:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>',
+  reports:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 20V11M12 20V4M19 20v-6"/></svg>',
+  archive:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10h14V9M10 13h4"/></svg>',
+  settings:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>'
+};
+function renderTabs() {
+  const tabs = [["log","Log"],["history","History"],["reports","Reports"],["archive","Archive"],["settings","Settings"]];
+  $("#tabs").innerHTML = tabs.map(([k, l]) => `<button data-tab="${k}" class="${S.tab === k ? "on" : ""}" aria-current="${S.tab === k ? "page" : "false"}">${ICONS[k]}<span>${l}</span></button>`).join("");
+  $("#tabs").querySelectorAll("button").forEach(b => b.onclick = () => { S.tab = b.dataset.tab; render(); window.scrollTo(0,0); });
+}
+function sumRange(from, to) { return S.expenses.filter(e => e.date >= from && e.date <= to).reduce((a, e) => a + (e.amountJPY || 0), 0); }
+function itemHTML(e) {
+  const foreign = e.originalCurrency !== "JPY";
+  const flags = [e.archivedAt ? '<span class="arch">archived</span>' : "", e.rateStatus === "provisional" ? '<span class="arch">rate pending</span>' : "", e.rateStatus === "missing" ? '<span class="arch">no rate</span>' : ""].join("");
+  return `<button class="item" data-id="${esc(e.id)}"><span class="ico">${CAT_ABBR[e.category] || "OT"}</span><span class="t"><div>${esc(e.description || e.category)}${flags}</div><div class="small muted">${esc([e.merchant, e.category, e.payment].filter(Boolean).join(" · "))}</div></span><span class="a"><div class="num">${e.amountJPY != null ? yen(e.amountJPY) : "—"}</div>${foreign ? `<div class="small muted num">${esc(fmtAmt(e.originalAmount, e.originalCurrency))}</div>` : ""}</span></button>`;
+}
+function bindItems(root) { root.querySelectorAll(".item[data-id]").forEach(b => b.onclick = () => openEdit(b.dataset.id)); }
+
+function viewLog() {
+  const t = today(), n = parseYmd(t);
+  const mStart = ymd(new Date(n.getFullYear(), n.getMonth(), 1));
+  const todaySum = sumRange(t, t), monthSum = sumRange(mStart, t);
+  const budget = Number(S.settings.monthlyBudget || 0);
+  const recent = [...S.expenses].sort((a,b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt)).slice(0, 6);
+  const trip = S.settings.trip && S.settings.trip.currency && activeDefaultCurrency(t) === S.settings.trip.currency ? S.settings.trip : null;
+  const pend = S.pending.length ? pendingHTML() : "";
+  const ans = S.answer ? `<div class="answer"><div class="small muted">${esc(S.answer.label)}</div><b>${yen(S.answer.sum)}</b> <span class="small muted">across ${S.answer.count} expense${S.answer.count === 1 ? "" : "s"}</span></div>` : "";
+  return `
+  ${isIOS && !isStandalone ? `<div class="banner">To use this like an app: tap the Share button, then <b>Add to Home Screen</b>, and open it from the icon. Expenses saved here in Safari are kept separately from the icon app.</div>` : ""}
+  <div class="card totals">
+    <div class="tot"><span class="small muted">Today</span><b>${yen(todaySum)}</b></div>
+    <div class="tot"><span class="small muted">${MON_SHORT[n.getMonth()]} so far</span><b>${yen(monthSum)}</b>
+      ${budget ? `<div class="bar"><i class="${monthSum > budget ? "over" : ""}" style="width:${Math.min(100, monthSum / budget * 100)}%"></i></div><span class="small muted">${monthSum > budget ? `${yen(monthSum - budget)} over` : `${yen(budget - monthSum)} left`} of ${yen(budget)}</span>` : ""}
+    </div>
+  </div>
+  ${trip ? `<div class="banner" style="background:var(--accent-weak)">Trip mode: <b>${esc(trip.name || "Trip")}</b>. Amounts without a currency are logged in ${esc(trip.currency)}.</div>` : ""}
+  <form class="card entry" id="sayForm" autocomplete="off">
+    <label for="say" class="small muted">Say or type an expense</label>
+    <div class="row">
+      <textarea id="say" class="grow" rows="2" placeholder="Lunch at Matsuya 980 yen" enterkeyhint="done"></textarea>
+      <button type="button" class="mic" id="micBtn" aria-label="Start listening" hidden>${ICONS.log}</button>
+    </div>
+    <div class="row"><button class="primary grow" type="submit">Add expense</button></div>
+    <div class="hint">Tap the microphone button and speak, or tap the box and use the microphone key on the keyboard. Try: “Taxi 25 dollars by card yesterday”, “Coffee 450 and sandwich 520”, “How much on food this month?”, “Archive September”.</div>
+  </form>
+  ${pend}${ans}
+  <section class="card"><div class="top"><h2>Recent</h2>${S.expenses.length > 6 ? '<button class="link" id="seeAll">See all</button>' : ""}</div>
+    ${recent.length ? `<div class="list">${recent.map(itemHTML).join("")}</div>` : `<div class="empty">No expenses yet. Your first one appears here after you add it above.</div>`}
+  </section>`;
+}
+function pendingHTML() {
+  if (S.editingPending) {
+    return `<div class="confirm"><div class="cline"><strong>Check before saving</strong><span class="small muted">${S.pending.length > 1 ? S.pending.length + " items" : ""}</span></div>
+      ${S.pending.map((p, i) => pendingForm(p, i)).join('<hr style="border:none;border-top:1px solid var(--line);margin:4px 0">')}
+      <div class="row"><button class="primary grow" id="pSave">Save</button><button id="pCancel">Discard</button></div></div>`;
+  }
+  return `<div class="confirm" id="pCard" role="button" tabindex="0" aria-label="Tap to edit before it saves">
+    ${S.pending.map(p => {
+      const r = p.currency === "JPY" ? null : jpyPerUnit(p.currency, p.date);
+      const jpy = p.currency === "JPY" ? p.amount : (r ? Math.round(p.amount * r.rate * (1 + Number(S.settings.cardFeePct||0)/100)) : null);
+      return `<div class="cline"><div><div><strong>${esc(p.description)}</strong></div><div class="meta"><span class="tag">${esc(p.category)}</span><span class="tag">${esc(dayLabel(p.date))}</span>${p.merchant ? `<span class="tag">${esc(p.merchant)}</span>` : ""}${p.payment ? `<span class="tag">${esc(p.payment)}</span>` : ""}${p.isBusiness ? '<span class="tag">Business</span>' : ""}${p.lowConfidence.includes("category") ? '<span class="tag warn">category guessed</span>' : ""}</div></div>
+        <div style="text-align:right"><div class="camt">${jpy != null ? yen(jpy) : "—"}</div>${p.currency !== "JPY" ? `<div class="small muted num">${esc(fmtAmt(p.amount, p.currency))}${r ? ` · 1 ${p.currency} = ${r.rate.toFixed(r.rate < 10 ? 4 : 2)} JPY` : ""}</div>` : ""}</div></div>`;
+    }).join("")}
+    <div class="count"><i id="countBar"></i></div>
+    <div class="row small muted"><span class="grow">Saving automatically. Tap to edit.</span><button id="pNow" class="link">Save now</button></div></div>`;
+}
+function pendingForm(p, i) {
+  const curs = knownCurrencies(); if (!curs.includes(p.currency)) curs.push(p.currency);
+  const r = p.currency === "JPY" ? null : jpyPerUnit(p.currency, p.date);
+  return `<div class="form" data-i="${i}">
+    <label class="full">Description<input data-f="description" value="${esc(p.description)}"></label>
+    <label>Amount<input data-f="amount" inputmode="decimal" value="${p.amount ?? ""}" placeholder="Required"></label>
+    <label>Currency<select data-f="currency">${curs.map(c => `<option ${c === p.currency ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+    ${p.currency !== "JPY" ? `<label class="full">Amount in JPY ${r ? `<span>(rate ${r.rate.toFixed(4)} from ${esc(r.date)}; leave blank to use it)</span>` : "<span>(no rate for this currency yet: enter the yen amount)</span>"}<input data-f="manualJPY" inputmode="numeric" value="${p.manualJPY ?? ""}" placeholder="${r ? Math.round((p.amount||0) * r.rate) : "Required"}"></label>` : ""}
+    <label>Category<select data-f="category">${CATS.map(c => `<option ${c === p.category ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+    <label>Date<input type="date" data-f="date" value="${esc(p.date)}"></label>
+    <label>Merchant<input data-f="merchant" value="${esc(p.merchant || "")}"></label>
+    <label>Payment<input data-f="payment" value="${esc(p.payment || "")}" placeholder="Cash, Card, Suica…"></label>
+    <label class="check full"><input type="checkbox" data-f="isBusiness" ${p.isBusiness ? "checked" : ""}> Business expense</label>
+  </div>`;
+}
+function bindLog(root) {
+  const form = $("#sayForm"), ta = $("#say");
+  form.onsubmit = ev => { ev.preventDefault(); const v = ta.value; ta.value = ""; submitText(v); };
+  ta.onkeydown = ev => { if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); form.requestSubmit(); } };
+  $("#micBtn").onclick = toggleMic; updateMic();
+  const sa = $("#seeAll"); if (sa) sa.onclick = () => { S.tab = "history"; render(); };
+  const card = $("#pCard");
+  if (card) {
+    const edit = ev => { if (ev.target.id === "pNow") return; S.editingPending = true; clearInterval(S.countTimer); render(); };
+    card.onclick = edit; card.onkeydown = ev => { if (ev.key === "Enter" || ev.key === " ") edit(ev); };
+    $("#pNow").onclick = ev => { ev.stopPropagation(); savePending(); };
+  }
+  root.querySelectorAll(".form[data-i]").forEach(f => {
+    const i = Number(f.dataset.i);
+    f.querySelectorAll("[data-f]").forEach(inp => {
+      inp.onchange = () => {
+        const k = inp.dataset.f, p = S.pending[i];
+        if (k === "isBusiness") p.isBusiness = inp.checked;
+        else if (k === "amount") p.amount = inp.value === "" ? null : Number(inp.value.replace(/,/g, ""));
+        else if (k === "manualJPY") p.manualJPY = inp.value === "" ? null : Number(inp.value.replace(/,/g, ""));
+        else p[k] = inp.value;
+        if (k === "currency" || k === "date") render();
+      };
+    });
+  });
+  const ps = $("#pSave");
+  if (ps) ps.onclick = () => {
+    const bad = S.pending.find(p => !(p.amount > 0) || (p.currency !== "JPY" && !jpyPerUnit(p.currency, p.date) && !(p.manualJPY > 0)));
+    if (bad) { toast(!(bad.amount > 0) ? "Enter an amount to save." : "Enter the amount in JPY: there's no rate for that currency."); return; }
+    savePending();
+  };
+  const pc = $("#pCancel"); if (pc) pc.onclick = () => { S.pending = []; S.editingPending = false; render(); };
+  bindItems(root);
+}
+
+function viewHistory() {
+  const q = S.histQuery.toLowerCase();
+  const rows = S.expenses.filter(e => (!S.histCat || e.category === S.histCat) && (!q || [e.description, e.merchant, e.category, e.payment, e.originalCurrency, e.notes, e.trip, e.rawTranscript].join(" ").toLowerCase().includes(q)))
+    .sort((a,b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
+  const groups = []; let cur = null;
+  for (const e of rows) { if (!cur || cur.date !== e.date) { cur = {date:e.date, items:[], sum:0}; groups.push(cur); } cur.items.push(e); cur.sum += e.amountJPY || 0; }
+  const shown = groups.slice(0, 60);
+  return `<div class="row"><input id="hq" class="grow" type="search" placeholder="Search description, shop, currency…" value="${esc(S.histQuery)}" aria-label="Search">
+    <select id="hc" style="width:auto" aria-label="Category"><option value="">All categories</option>${CATS.map(c => `<option ${c === S.histCat ? "selected" : ""}>${c}</option>`).join("")}</select></div>
+    <div class="small muted">${rows.length} expense${rows.length === 1 ? "" : "s"} · ${yen(rows.reduce((a,e) => a + (e.amountJPY||0), 0))}</div>
+    <section class="card" style="padding-top:4px">${shown.length ? shown.map(g => `<div class="day"><span>${esc(dayLabel(g.date))}</span><span class="num">${yen(g.sum)}</span></div><div class="list">${g.items.map(itemHTML).join("")}</div>`).join("") : `<div class="empty">${S.expenses.length ? "Nothing matches that search." : "No expenses yet."}</div>`}
+    ${groups.length > 60 ? `<div class="empty small">Showing the latest 60 days with expenses. Search to find older ones.</div>` : ""}</section>`;
+}
+function bindHistory(root) {
+  const hq = $("#hq");
+  hq.oninput = () => { S.histQuery = hq.value; const pos = hq.selectionStart; render(); const n = $("#hq"); n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) {} };
+  $("#hc").onchange = ev => { S.histCat = ev.target.value; render(); };
+  bindItems(root);
+}
+
+function viewReports() {
+  const months = [...new Set(S.expenses.map(e => monthKey(e.date)))].sort().reverse();
+  const now = today().slice(0,7);
+  if (!months.includes(now)) months.unshift(now);
+  const mk = S.repMonth && months.includes(S.repMonth) ? S.repMonth : months[0];
+  const rows = S.expenses.filter(e => monthKey(e.date) === mk);
+  const total = rows.reduce((a,e) => a + (e.amountJPY||0), 0);
+  const [y, m] = mk.split("-").map(Number);
+  const prevKey = ymd(new Date(y, m-2, 1)).slice(0,7);
+  const prev = S.expenses.filter(e => monthKey(e.date) === prevKey).reduce((a,e) => a + (e.amountJPY||0), 0);
+  const byCat = {}; rows.forEach(e => byCat[e.category] = (byCat[e.category]||0) + (e.amountJPY||0));
+  const cats = Object.entries(byCat).sort((a,b) => b[1]-a[1]);
+  const max = cats.length ? cats[0][1] : 1;
+  const days = new Date(y, m, 0).getDate();
+  const daily = Array.from({length:days}, (_, i) => rows.filter(e => Number(e.date.slice(8)) === i+1).reduce((a,e) => a + (e.amountJPY||0), 0));
+  const dmax = Math.max(1, ...daily);
+  const W = 300, H = 70, bw = W / days;
+  const byCur = {}; rows.forEach(e => { const k = e.originalCurrency; byCur[k] = byCur[k] || {orig:0, jpy:0, n:0}; byCur[k].orig += e.originalAmount; byCur[k].jpy += e.amountJPY||0; byCur[k].n++; });
+  const biz = rows.filter(e => e.isBusiness).reduce((a,e) => a + (e.amountJPY||0), 0);
+  const budget = Number(S.settings.monthlyBudget || 0);
+  return `<div class="row"><label for="rm" class="small muted">Month</label><select id="rm" style="width:auto">${months.map(k => `<option value="${k}" ${k === mk ? "selected" : ""}>${monthLabel(k)}</option>`).join("")}</select></div>
+  <div class="card totals">
+    <div class="tot"><span class="small muted">Total spent</span><b>${yen(total)}</b><span class="small muted">${rows.length} expenses</span></div>
+    <div class="tot"><span class="small muted">vs ${monthLabel(prevKey)}</span><b>${prev ? (total >= prev ? "+" : "−") + yen(Math.abs(total - prev)).slice(0) : "—"}</b><span class="small muted">${prev ? `${yen(prev)} last month` : "No data last month"}</span></div>
+  </div>
+  ${budget ? `<div class="card"><div class="cline"><span>Monthly budget</span><span class="num">${yen(total)} / ${yen(budget)}</span></div><div class="bar"><i class="${total > budget ? "over" : ""}" style="width:${Math.min(100, total/budget*100)}%"></i></div></div>` : ""}
+  <section class="card"><h2>By category</h2>${cats.length ? cats.map(([c, v]) => `<div class="cat"><span>${esc(c)}</span><span class="num">${yen(v)} <span class="muted small">${Math.round(v/total*100)}%</span></span><div class="bar"><i style="width:${v/max*100}%"></i></div></div>`).join("") : `<div class="empty">No expenses in ${monthLabel(mk)}.</div>`}</section>
+  <section class="card"><div class="cline"><h2>Daily spending</h2><span class="small muted num">peak ${yen(dmax === 1 && !daily.some(Boolean) ? 0 : dmax)}</span></div>
+    <svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Daily spending bars for ${monthLabel(mk)}">
+      <line x1="0" x2="${W}" y1="${H-0.5}" y2="${H-0.5}" stroke="var(--line)" stroke-width="1"/>
+      ${daily.map((v, i) => v ? `<rect x="${(i*bw + bw*0.15).toFixed(2)}" y="${(H - v/dmax*(H-4)).toFixed(2)}" width="${(bw*0.7).toFixed(2)}" height="${(v/dmax*(H-4)).toFixed(2)}" rx="1.5" fill="var(--accent)"/>` : "").join("")}
+    </svg>
+    <div class="cline small muted num"><span>1</span><span>${Math.ceil(days/2)}</span><span>${days}</span></div></section>
+  <section class="card"><h2>By currency</h2>${Object.keys(byCur).length ? Object.entries(byCur).map(([c, v]) => `<div class="cline" style="padding:6px 0"><span>${esc(c)} <span class="small muted">· ${v.n}</span></span><span class="num">${c === "JPY" ? yen(v.jpy) : `${esc(fmtAmt(v.orig, c))} → ${yen(v.jpy)}`}</span></div>`).join("") : '<div class="empty">—</div>'}
+    ${biz ? `<div class="cline" style="padding:6px 0;border-top:1px solid var(--line)"><span>Business expenses</span><span class="num">${yen(biz)}</span></div>` : ""}</section>
+  <div class="row"><button class="grow" id="csvBtn">Download ${monthLabel(mk)} as CSV</button><button class="primary grow" id="toArch">Archive to Drive</button></div>`;
+}
+function bindReports() {
+  $("#rm").onchange = ev => { S.repMonth = ev.target.value; render(); };
+  const mk = $("#rm").value;
+  $("#csvBtn").onclick = () => downloadCsv(S.expenses.filter(e => monthKey(e.date) === mk), `expenses_${mk}.csv`);
+  $("#toArch").onclick = () => openArchive(mk);
+}
+
+// ---------- CSV ----------
+const COLS = ["Entry ID","Date","Description","Merchant","Category","Payment","Original amount","Original currency","Rate (JPY per unit)","Rate date","Rate status","JPY amount","Business","Trip","Notes","Transcript"];
+function rowOf(e) { return [e.id, e.date, e.description, e.merchant, e.category, e.payment, e.originalAmount, e.originalCurrency, e.exchangeRate != null ? Number(e.exchangeRate).toFixed(6) : "", e.rateDate || "", e.rateStatus || "", e.amountJPY ?? "", e.isBusiness ? "Yes" : "No", e.trip || "", e.notes || "", e.rawTranscript || ""]; }
+const csvCell = v => { const s = String(v ?? ""); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+const toCsv = rows => rows.map(r => r.map(csvCell).join(",")).join("\n");
+function parseCsv(text) {
+  const rows = []; let row = [], cell = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i+1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; }
+    else if (c === '"') q = true;
+    else if (c === ",") { row.push(cell); cell = ""; }
+    else if (c === "\n" || c === "\r") { if (c === "\r" && text[i+1] === "\n") i++; row.push(cell); rows.push(row); row = []; cell = ""; }
+    else cell += c;
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(c => c !== ""));
+}
+// ---------- files: share sheet on iPhone, download elsewhere ----------
+async function saveFile(name, text, type) {
+  const blob = new Blob([text], {type});
+  try {
+    const file = new File([blob], name, {type});
+    if (navigator.canShare && navigator.canShare({files: [file]})) { await navigator.share({files: [file], title: name}); return; }
+  } catch (e) { if (e && e.name === "AbortError") return; }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+async function downloadCsv(list, filename) {
+  if (!list.length) { toast("No expenses to download."); return; }
+  const sorted = [...list].sort((a, b) => a.date.localeCompare(b.date));
+  await saveFile(filename, "﻿" + toCsv([COLS, ...sorted.map(rowOf)]), "text/csv");
+}
+async function exportBackup() {
+  const data = {app: "voice-expense-logger", version: 1, exportedAt: new Date().toISOString(), expenses: S.expenses, settings: S.settings, archives: S.archives};
+  await saveFile(`expense-backup-${today()}.json`, JSON.stringify(data), "application/json");
+}
+const FIELD_OF = {"entry id": "id", "date": "date", "description": "description", "merchant": "merchant", "category": "category", "payment": "payment", "original amount": "originalAmount", "original currency": "originalCurrency", "rate (jpy per unit)": "exchangeRate", "rate date": "rateDate", "rate status": "rateStatus", "jpy amount": "amountJPY", "business": "isBusiness", "trip": "trip", "notes": "notes", "transcript": "rawTranscript"};
+async function importFile(file) {
+  const text = (await file.text()).replace(/^﻿/, "");
+  const have = new Set(S.expenses.map(e => e.id));
+  let list = [];
+  if (/^\s*\{/.test(text)) {
+    const j = JSON.parse(text);
+    list = j.expenses || [];
+    if (j.settings && !S.expenses.length) await store.saveSettings({...j.settings});
+    if (Array.isArray(j.archives) && !S.archives.length) for (const a of j.archives) await store.addArchive(a);
+  } else {
+    const t = parseCsv(text); const h = (t[0] || []).map(x => FIELD_OF[x.trim().toLowerCase()] || null);
+    if (!h.includes("date") || !h.includes("originalAmount")) { toast("That file isn't an expense CSV from this app."); return; }
+    list = t.slice(1).map(r => {
+      const e = {}; h.forEach((f, i) => { if (f) e[f] = r[i]; });
+      e.originalAmount = Number(e.originalAmount) || 0; e.amountJPY = e.amountJPY === "" || e.amountJPY == null ? null : Number(e.amountJPY);
+      e.exchangeRate = e.exchangeRate ? Number(e.exchangeRate) : (e.originalCurrency === "JPY" ? 1 : null);
+      e.isBusiness = /^(yes|true|1)$/i.test(e.isBusiness || ""); e.originalCurrency = e.originalCurrency || "JPY";
+      e.category = CATS.includes(e.category) ? e.category : "Other"; e.source = "import"; e.tags = [];
+      e.archivedAt = null; e.archiveFileId = null; e.createdAt = e.updatedAt = new Date().toISOString();
+      return e;
+    });
+  }
+  let n = 0;
+  for (const e of list) { if (!e.date || (e.id && have.has(e.id))) continue; try { await store.add(e); n++; } catch (er) {} }
+  toast(`Imported ${n} expense${n === 1 ? "" : "s"}${list.length - n ? `, skipped ${list.length - n}` : ""}`);
+  render();
+}
+
+// ---------- Google Drive (your own Google Cloud keys in config.js) ----------
+const CFG = window.APP_CONFIG || {};
+const SCOPE = "https://www.googleapis.com/auth/drive.file";
+const driveReady = () => !!(CFG.GOOGLE_CLIENT_ID && CFG.GOOGLE_API_KEY && CFG.GOOGLE_APP_ID);
+const redirectUri = () => location.origin + location.pathname.replace(/index\.html$/, "");
+function getToken() { try { const t = JSON.parse(localStorage.getItem("g_tok") || "null"); if (t && t.exp > Date.now() + 60000) return t.v; } catch (e) {} return null; }
+function signIn() {
+  const p = new URLSearchParams({client_id: CFG.GOOGLE_CLIENT_ID, redirect_uri: redirectUri(), response_type: "token", scope: SCOPE, include_granted_scopes: "true", state: "drive"});
+  location.href = "https://accounts.google.com/o/oauth2/v2/auth?" + p.toString();
+}
+function signOut() { try { localStorage.removeItem("g_tok"); } catch (e) {} render(); }
+function handleOAuthReturn() {
+  if (!location.hash || location.hash.length < 2) return;
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get("access_token")) {
+    try { localStorage.setItem("g_tok", JSON.stringify({v: h.get("access_token"), exp: Date.now() + Number(h.get("expires_in") || 3600) * 1000})); } catch (e) {}
+    history.replaceState(null, "", redirectUri()); S.tab = "archive"; setTimeout(() => toast("Signed in to Google Drive"), 300);
+  } else if (h.get("error")) {
+    history.replaceState(null, "", redirectUri()); S.tab = "archive"; setTimeout(() => toast("Google sign-in didn't finish: " + h.get("error")), 300);
+  }
+}
+async function gfetch(url, opts = {}) {
+  const tok = getToken();
+  if (!tok) throw {code: "auth"};
+  let r;
+  try { r = await fetch(url, {...opts, headers: {...(opts.headers || {}), Authorization: "Bearer " + tok}}); }
+  catch (e) { throw {code: "network"}; }
+  if (r.status === 401) { try { localStorage.removeItem("g_tok"); } catch (e) {} throw {code: "auth"}; }
+  if (!r.ok) { let msg = ""; try { const j = await r.json(); msg = (j.error && j.error.message) || ""; } catch (e) {} throw {code: "http", status: r.status, message: msg}; }
+  return r.json();
+}
+function driveMsg(e) {
+  switch (e && e.code) {
+    case "auth": return "Sign in to Google again, then tap Archive.";
+    case "network": return "No connection to Google. Check your internet and try again.";
+    case "http": return e.status === 403 || e.status === 404 ? "This app can't open that file or folder any more. Choose it again with Change." : "Google refused the request" + (e.message ? ": " + e.message : ".");
+    case "layout": return e.message;
+    default: return "Something went wrong talking to Google Drive. Check Drive before trying again.";
+  }
+}
+function loadScript(src) {
+  return new Promise((res, rej) => { if (document.querySelector(`script[src="${src}"]`)) return res(); const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = () => rej({code: "network"}); document.head.appendChild(s); });
+}
+async function openPicker(mode) {
+  const tok = getToken();
+  if (!tok) { signIn(); return; }
+  try {
+    await loadScript("https://apis.google.com/js/api.js");
+    await new Promise(r => gapi.load("picker", r));
+  } catch (e) { A.error = driveMsg(e); render(); return; }
+  const P = google.picker;
+  const view = mode === "folder"
+    ? new P.DocsView(P.ViewId.FOLDERS).setIncludeFolders(true).setSelectFolderEnabled(true).setMimeTypes("application/vnd.google-apps.folder")
+    : new P.DocsView(P.ViewId.SPREADSHEETS).setMode(P.DocsViewMode.LIST);
+  new P.PickerBuilder()
+    .setAppId(CFG.GOOGLE_APP_ID).setDeveloperKey(CFG.GOOGLE_API_KEY).setOAuthToken(tok)
+    .addView(view).setTitle(mode === "folder" ? "Choose a folder for new archive files" : "Choose a sheet to add to")
+    .setCallback(d => {
+      if (d.action !== P.Action.PICKED || !d.docs || !d.docs[0]) return;
+      const doc = d.docs[0];
+      A.dest = mode === "folder" ? {mode: "folder", id: doc.id, title: doc.name} : {mode: "file", id: doc.id, title: doc.name, url: doc.url || `https://docs.google.com/spreadsheets/d/${doc.id}/edit`};
+      A.error = ""; store.saveSettings({archiveDest: A.dest}); render();
+    })
+    .build().setVisible(true);
+}
+
+// ---------- archive ----------
+let A = null;
+function newArchiveState(period) { return {period, includeArchived: false, dest: S.settings.archiveDest ? {...S.settings.archiveDest} : null, busy: false, status: "", error: ""}; }
+function openArchive(month) {
+  const months = [...new Set(S.expenses.map(e => monthKey(e.date)))].sort().reverse();
+  A = newArchiveState(month === "all" ? "all" : (month || months[0] || today().slice(0, 7)));
+  S.tab = "archive"; render();
+}
+function archiveRows() {
+  return S.expenses.filter(e => (A.period === "all" || monthKey(e.date) === A.period) && (A.includeArchived || !e.archivedAt)).sort((a, b) => a.date.localeCompare(b.date));
+}
+function viewArchive() {
+  if (!A) A = newArchiveState(today().slice(0, 7));
+  if (!A.dest && S.settings.archiveDest) A.dest = {...S.settings.archiveDest};
+  const months = [...new Set(S.expenses.map(e => monthKey(e.date)))].sort().reverse();
+  const rows = archiveRows(), sum = rows.reduce((a, e) => a + (e.amountJPY || 0), 0), d = A.dest;
+  const signed = !!getToken();
+  const fileName = A.period === "all" ? `Expenses ${today()}` : `Expenses ${A.period}`;
+  const hist = [...S.archives].sort((a, b) => (b.archivedAt || "").localeCompare(a.archivedAt || ""));
+  if (!driveReady()) return `<div class="banner">Google Drive isn't set up yet. Add your Google Cloud keys to <b>config.js</b> (see the README). Meanwhile you can download CSV files from Reports or back up from Settings.</div>`;
+  return `<section class="card" style="display:flex;flex-direction:column;gap:12px">
+    <div class="cline"><h2>Archive to Google Drive</h2>${signed ? '<span class="small status-ok">Signed in</span>' : '<button id="gsign" class="primary">Sign in with Google</button>'}</div>
+    <div class="form">
+      <label>Period<select id="ap"><option value="all" ${A.period === "all" ? "selected" : ""}>All periods</option>${months.map(k => `<option value="${k}" ${k === A.period ? "selected" : ""}>${monthLabel(k)}</option>`).join("")}</select></label>
+      <label class="check" style="align-self:end;padding-bottom:10px"><input type="checkbox" id="ainc" ${A.includeArchived ? "checked" : ""}> Include already archived</label>
+    </div>
+    <div class="card" style="background:var(--paper);display:flex;flex-direction:column;gap:10px">
+      ${d ? `<div><strong>${d.mode === "file" ? "Add to existing sheet" : "New sheet in folder"}</strong><div class="small muted" style="overflow-wrap:anywhere">${esc(d.title)}</div></div>` : `<span class="muted">Choose where archives go</span>`}
+      <div class="row"><button id="pkFolder" class="grow">Choose folder</button><button id="pkFile" class="grow">Choose existing sheet</button></div>
+      <button class="link" id="pkRoot" style="align-self:flex-start">Use My Drive (top level)</button>
+    </div>
+    <div class="small muted">${rows.length} expense${rows.length === 1 ? "" : "s"} · ${yen(sum)}${d && d.mode === "folder" ? ` · creates Google Sheet “${esc(fileName)}”` : ""}${d && d.mode === "file" ? " · new rows are added at the bottom; rows already in the sheet are skipped" : ""}</div>
+    ${A.status ? `<div class="small status-ok">${A.status}</div>` : ""}${A.error ? `<div class="small status-err">${esc(A.error)}</div>` : ""}
+    <button class="primary" id="ago" ${!d || !rows.length || A.busy ? "disabled" : ""}>${A.busy ? "Archiving…" : `Archive ${rows.length} expense${rows.length === 1 ? "" : "s"}`}</button>
+    <div class="hint">Archived expenses stay in the app until you delete them yourself. Deleting them here never touches your Drive files.</div>
+  </section>
+  <section class="card"><h2>Archive history</h2>${hist.length ? `<div class="list">${hist.map(h => `<div class="cline" style="padding:8px 0;border-top:1px solid var(--line)"><div style="min-width:0"><div>${esc(h.periodLabel || h.period)} · ${h.count} rows</div><div class="small muted">${esc((h.archivedAt || "").slice(0, 10))} · ${esc(h.mode === "append" ? "added to " : "")}${esc(h.fileTitle || "")}</div></div><span class="num">${yen(h.totalJPY)}</span>${h.url ? `<a href="${esc(h.url)}" target="_blank" rel="noopener" class="small" style="color:var(--accent);margin-left:8px">Open</a>` : ""}</div>`).join("")}</div>` : '<div class="empty">Nothing archived yet.</div>'}</section>`;
+}
+function bindArchive() {
+  if (!driveReady()) return;
+  $("#ap").onchange = ev => { A.period = ev.target.value; A.status = ""; render(); };
+  $("#ainc").onchange = ev => { A.includeArchived = ev.target.checked; render(); };
+  const gs = $("#gsign"); if (gs) gs.onclick = signIn;
+  $("#pkFolder").onclick = () => openPicker("folder");
+  $("#pkFile").onclick = () => openPicker("file");
+  $("#pkRoot").onclick = () => { A.dest = {mode: "folder", id: "root", title: "My Drive"}; store.saveSettings({archiveDest: A.dest}); render(); };
+  $("#ago").onclick = runArchive;
+}
+function colLetter(n) { let s = ""; n++; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
+async function runArchive() {
+  const rows = archiveRows(), d = A.dest;
+  if (!d || !rows.length || A.busy) return;
+  if (!getToken()) { signIn(); return; }
+  A.busy = true; A.error = ""; A.status = ""; render();
+  const label = A.period === "all" ? "All periods" : monthLabel(A.period);
+  let created, mode = d.mode === "file" ? "append" : "new", added = rows.length, skipped = 0;
+  try {
+    if (d.mode === "folder") {
+      const title = A.period === "all" ? `Expenses ${today()}` : `Expenses ${A.period}`;
+      const meta = {name: title, mimeType: "application/vnd.google-apps.spreadsheet"};
+      if (d.id && d.id !== "root") meta.parents = [d.id];
+      const b = "vel" + Date.now();
+      const body = `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: text/csv; charset=UTF-8\r\n\r\n${toCsv([COLS, ...rows.map(rowOf)])}\r\n--${b}--`;
+      const f = await gfetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink", {method: "POST", headers: {"Content-Type": `multipart/related; boundary=${b}`}, body});
+      created = {id: f.id, title: f.name, url: f.webViewLink};
+    } else {
+      const base = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(d.id)}/values/`;
+      const head = await gfetch(base + encodeURIComponent("1:1"));
+      const header = (head.values && head.values[0]) || [];
+      let newRows;
+      if (!header.length) {
+        newRows = [COLS, ...rows.map(rowOf)];
+      } else {
+        const idCol = header.findIndex(h => String(h).trim().toLowerCase() === "entry id");
+        if (idCol < 0) throw {code: "layout", message: "That sheet doesn't have this app's columns (no “Entry ID” column). Choose another sheet, or archive to a new sheet in a folder."};
+        const L = colLetter(idCol);
+        const ids = await gfetch(base + encodeURIComponent(`${L}:${L}`));
+        const existing = new Set(((ids.values) || []).slice(1).map(r => r[0]));
+        const fresh = rows.filter(e => !existing.has(e.id));
+        skipped = rows.length - fresh.length;
+        const map = COLS.map(c => header.findIndex(h => String(h).trim().toLowerCase() === c.toLowerCase()));
+        newRows = fresh.map(e => { const r = rowOf(e); const out = header.map(() => ""); map.forEach((j, i) => { if (j >= 0) out[j] = r[i]; }); return out; });
+      }
+      added = header.length ? newRows.length : rows.length;
+      if (newRows.length) await gfetch(base + encodeURIComponent("A1") + ":append?valueInputOption=RAW&insertDataOption=INSERT_ROWS", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({values: newRows})});
+      created = {id: d.id, title: d.title, url: d.url};
+    }
+    const now = new Date().toISOString();
+    for (const e of rows) await store.update(e.id, {archivedAt: now, archiveFileId: created.id}).catch(() => {});
+    await store.addArchive({period: A.period, periodLabel: label, mode, fileTitle: created.title, fileId: created.id, url: created.url || "", count: added, skipped, totalJPY: rows.reduce((a, e) => a + (e.amountJPY || 0), 0), archivedAt: now, status: "done"});
+    A.status = `Archived ${added} expense${added === 1 ? "" : "s"}${skipped ? ` (${skipped} already in the sheet)` : ""}. ${created.url ? `<a href="${esc(created.url)}" target="_blank" rel="noopener" style="color:var(--accent)">Open in Drive</a>` : ""}`;
+  } catch (e) {
+    A.error = driveMsg(e);
+  }
+  A.busy = false; render();
+}
+
+// ---------- edit sheet ----------
+let E = null;
+function openEdit(id) {
+  const e = S.expenses.find(x => x.id === id); if (!e) return;
+  E = {id, data:{...e}, confirmDelete:false};
+  renderSheet();
+}
+function renderSheet() {
+  const o = $("#overlay");
+  if (!E) { o.innerHTML = ""; document.body.style.overflow = ""; return; }
+  const e = E.data, curs = knownCurrencies(); if (!curs.includes(e.originalCurrency)) curs.push(e.originalCurrency);
+  const foreign = e.originalCurrency !== "JPY";
+  document.body.style.overflow = "hidden";
+  o.innerHTML = `<div class="sheet-bg" id="sbg"><div class="sheet" role="dialog" aria-modal="true" aria-label="Edit expense">
+    <div class="cline"><h1 style="font-size:19px">Edit expense</h1><button class="link" id="sx">Close</button></div>
+    ${e.archivedAt ? `<div class="banner" style="background:var(--accent-weak)">Archived on ${esc(e.archivedAt.slice(0,10))}. Changes here don't update the Drive file.</div>` : ""}
+    <div class="form" id="ef">
+      <label class="full">Description<input id="e_description" value="${esc(e.description)}"></label>
+      <label>Amount<input id="e_originalAmount" inputmode="decimal" value="${esc(e.originalAmount)}"></label>
+      <label>Currency<select id="e_originalCurrency">${curs.map(c => `<option ${c === e.originalCurrency ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+      ${foreign ? `<label class="full">Actual JPY charged <span>(from your card statement; blank = today's rate method)</span><input id="e_stmt" inputmode="numeric" value="${e.rateStatus === "statement" || e.rateStatus === "manual" ? esc(e.amountJPY) : ""}" placeholder="${e.amountJPY != null ? Math.round(e.amountJPY) : ""}"></label>
+      <div class="full small muted">${e.exchangeRate ? `Rate ${Number(e.exchangeRate).toFixed(4)} JPY per ${esc(e.originalCurrency)} · ${esc(e.rateDate || "")} · ${esc(e.rateStatus)}` : "No rate yet"}</div>` : ""}
+      <label>Category<select id="e_category">${CATS.map(c => `<option ${c === e.category ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+      <label>Date<input type="date" id="e_date" value="${esc(e.date)}"></label>
+      <label>Merchant<input id="e_merchant" value="${esc(e.merchant)}"></label>
+      <label>Payment<input id="e_payment" value="${esc(e.payment)}"></label>
+      <label>Trip / project<input id="e_trip" value="${esc(e.trip)}"></label>
+      <label class="check" style="align-self:end;padding-bottom:10px"><input type="checkbox" id="e_isBusiness" ${e.isBusiness ? "checked" : ""}> Business</label>
+      <label class="full">Notes<input id="e_notes" value="${esc(e.notes)}"></label>
+      ${e.rawTranscript ? `<div class="full small muted">You said: “${esc(e.rawTranscript)}”</div>` : ""}
+    </div>
+    ${E.confirmDelete ? `<div class="banner" style="background:var(--bad-weak)">Delete this expense from the app? This can't be undone. Drive files are not affected.<div class="row" style="margin-top:8px"><button class="danger" id="sdel2">Delete</button><button id="sdelno">Keep it</button></div></div>` : ""}
+    <div class="row"><button class="primary grow" id="ssave">Save changes</button><button id="sdup">Duplicate</button><button class="danger" id="sdel">Delete</button></div>
+  </div></div>`;
+  $("#sbg").onclick = ev => { if (ev.target.id === "sbg") { E = null; renderSheet(); } };
+  $("#sx").onclick = () => { E = null; renderSheet(); };
+  $("#e_originalCurrency").onchange = ev => { collect(); E.data.originalCurrency = ev.target.value; if (E.data.rateStatus === "statement" || E.data.rateStatus === "manual") E.data.rateStatus = "final"; renderSheet(); };
+  $("#sdel").onclick = () => { collect(); E.confirmDelete = true; renderSheet(); };
+  const d2 = $("#sdel2"); if (d2) d2.onclick = async () => { const id = E.id; E = null; renderSheet(); try { await store.remove(id); toast("Deleted"); } catch (er) { onDbErr(er); } };
+  const dn = $("#sdelno"); if (dn) dn.onclick = () => { E.confirmDelete = false; renderSheet(); };
+  $("#ssave").onclick = async () => {
+    collect();
+    const x = E.data;
+    if (!(x.originalAmount > 0)) { toast("Enter an amount above zero."); return; }
+    const stmtEl = $("#e_stmt"); const stmt = stmtEl && stmtEl.value.trim() !== "" ? Number(stmtEl.value.replace(/,/g, "")) : null;
+    if (x.originalCurrency === "JPY") { x.rateStatus = "final"; applyConversion(x); }
+    else if (stmt > 0) { x.amountJPY = Math.round(stmt); x.exchangeRate = stmt / x.originalAmount; x.rateStatus = "statement"; x.rateDate = x.date; }
+    else { x.rateStatus = "final"; applyConversion(x); }
+    const patch = {}; ["description","originalAmount","originalCurrency","category","date","merchant","payment","trip","isBusiness","notes","amountJPY","exchangeRate","rateDate","rateStatus"].forEach(k => patch[k] = x[k] ?? null);
+    patch.updatedAt = new Date().toISOString();
+    const id = E.id; E = null; renderSheet();
+    try {
+      await store.update(id, patch);
+      if (x.merchant && x.category !== "Other") await store.saveSettings({merchantMap: {...S.settings.merchantMap, [x.merchant.toLowerCase()]: x.category}});
+      toast("Saved");
+    } catch (er) { onDbErr(er); }
+  };
+  $("#sdup").onclick = async () => {
+    collect();
+    const x = {...E.data}; delete x.id;
+    x.date = today(); x.archivedAt = null; x.archiveFileId = null; x.source = "manual"; x.createdAt = x.updatedAt = new Date().toISOString();
+    if (x.rateStatus !== "statement" && x.rateStatus !== "manual") applyConversion(x);
+    E = null; renderSheet();
+    try { await store.add(x); toast("Duplicated for today"); } catch (er) { onDbErr(er); }
+  };
+}
+function collect() {
+  const v = id => { const el = document.getElementById(id); return el ? el.value : undefined; };
+  const x = E.data;
+  x.description = v("e_description"); x.originalAmount = Number(String(v("e_originalAmount")).replace(/,/g, "")); x.originalCurrency = v("e_originalCurrency");
+  x.category = v("e_category"); x.date = v("e_date") || x.date; x.merchant = v("e_merchant"); x.payment = v("e_payment"); x.trip = v("e_trip"); x.notes = v("e_notes");
+  x.isBusiness = document.getElementById("e_isBusiness").checked;
+}
+
+// ---------- settings ----------
+let delMonth = null, delConfirm = false;
+function viewSettings() {
+  const st = S.settings, tr = st.trip || {};
+  const curs = knownCurrencies();
+  const archMonths = [...new Set(S.expenses.filter(e => e.archivedAt).map(e => monthKey(e.date)))].sort().reverse();
+  if (delMonth && !archMonths.includes(delMonth)) delMonth = null;
+  const delCount = delMonth ? S.expenses.filter(e => e.archivedAt && monthKey(e.date) === delMonth).length : 0;
+  const fx = S.fx;
+  return `<section class="card form">
+    <h2 class="full">Currency</h2>
+    <label>Default currency<select id="s_cur">${curs.map(c => `<option ${c === st.defaultCurrency ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+    <label>Card fee on foreign spend (%)<input id="s_fee" inputmode="decimal" value="${esc(st.cardFeePct || 0)}"></label>
+    <div class="full small muted">${fx ? `Exchange rates: ${esc(fx.source || "ECB reference rates")}, ${esc(fx.date)}. ${Object.keys(fx.rates || {}).length} currencies. Totals are always shown in JPY.` : "Exchange rates haven't loaded yet. Foreign amounts will ask for the yen value until they do."}</div>
+  </section>
+  <section class="card form">
+    <h2 class="full">Trip mode</h2>
+    <label class="full">Trip name<input id="t_name" value="${esc(tr.name || "")}" placeholder="e.g. Singapore client visit"></label>
+    <label>Trip currency<select id="t_cur"><option value="">Off</option>${curs.filter(c => c !== "JPY").map(c => `<option ${c === tr.currency ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+    <label>Ends<input type="date" id="t_end" value="${esc(tr.end || "")}"></label>
+    <div class="full small muted">While a trip is on, amounts you say without a currency use the trip currency.</div>
+  </section>
+  <section class="card form">
+    <h2 class="full">Logging</h2>
+    <label>Monthly budget (JPY)<input id="s_budget" inputmode="numeric" value="${esc(st.monthlyBudget || "")}" placeholder="None"></label>
+    <label>Auto-save after<select id="s_auto">${[[0,"Off (always confirm)"],[3,"3 seconds"],[5,"5 seconds"],[8,"8 seconds"]].map(([v, l]) => `<option value="${v}" ${Number(st.autoSaveSecs) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+    <div class="full small muted">Learned shop categories: ${Object.keys(st.merchantMap || {}).length}. ${Object.keys(st.merchantMap || {}).length ? '<button class="link" id="s_clearmap">Forget them</button>' : ""}</div>
+  </section>
+  <section class="card" style="display:flex;flex-direction:column;gap:10px">
+    <h2>Delete archived expenses</h2>
+    ${archMonths.length ? `<div class="row"><select id="d_m" class="grow"><option value="">Choose a month</option>${archMonths.map(k => `<option value="${k}" ${k === delMonth ? "selected" : ""}>${monthLabel(k)}</option>`).join("")}</select><button class="danger" id="d_go" ${delMonth ? "" : "disabled"}>Delete</button></div>
+      ${delConfirm && delMonth ? `<div class="banner" style="background:var(--bad-weak)">Delete ${delCount} archived expense${delCount === 1 ? "" : "s"} from ${monthLabel(delMonth)} from the app? Your Drive files stay as they are.<div class="row" style="margin-top:8px"><button class="danger" id="d_yes">Delete ${delCount}</button><button id="d_no">Cancel</button></div></div>` : ""}` : '<div class="small muted">Nothing archived yet. Expenses stay in the app until you delete them here or one by one.</div>'}
+  </section>
+  <section class="card" style="display:flex;flex-direction:column;gap:10px"><h2>Backup and restore</h2>
+    <div class="small muted">Expenses are saved only on this iPhone, inside the home-screen app. ${S.expenses.length} stored. Archive to Drive or export a backup regularly: if the app is removed, unarchived records are lost.</div>
+    <input type="file" id="bkImport" accept=".json,.csv,text/csv,application/json" hidden aria-label="Import a backup or CSV">
+    <div class="row"><button class="grow" id="bkExport">Export backup</button><button class="grow" id="bkImportBtn">Import file</button></div>
+    <div class="small muted">Import accepts a backup file from this app or a CSV downloaded from Reports, including from the claude.ai version. Rows already here are skipped.</div>
+  </section>
+  <section class="card" style="display:flex;flex-direction:column;gap:8px"><h2>Google account</h2>
+    <div class="small muted">${!driveReady() ? "Not set up: add your keys to config.js." : getToken() ? "Signed in. Sign-in lasts about an hour, then the app asks again when you archive." : "Not signed in. You'll be asked when you archive."}</div>
+    ${getToken() ? '<button id="gout" style="align-self:flex-start">Sign out</button>' : ""}
+  </section>`;
+}
+function bindSettings() {
+  const num = v => Number(String(v).replace(/,/g, "")) || 0;
+  $("#s_cur").onchange = ev => store.saveSettings({defaultCurrency: ev.target.value});
+  $("#s_fee").onchange = ev => store.saveSettings({cardFeePct: num(ev.target.value)});
+  $("#s_budget").onchange = ev => store.saveSettings({monthlyBudget: num(ev.target.value)});
+  $("#s_auto").onchange = ev => store.saveSettings({autoSaveSecs: Number(ev.target.value)});
+  const saveTrip = () => { const c = $("#t_cur").value; store.saveSettings({trip: c ? {name: $("#t_name").value.trim(), currency: c, start: (S.settings.trip && S.settings.trip.start) || today(), end: $("#t_end").value || null} : null}); };
+  $("#t_cur").onchange = saveTrip; $("#t_name").onchange = saveTrip; $("#t_end").onchange = saveTrip;
+  const cm = $("#s_clearmap"); if (cm) cm.onclick = () => store.saveSettings({merchantMap:{}});
+  const dm = $("#d_m"); if (dm) dm.onchange = ev => { delMonth = ev.target.value || null; delConfirm = false; render(); };
+  const dg = $("#d_go"); if (dg) dg.onclick = () => { delConfirm = true; render(); };
+  const dn = $("#d_no"); if (dn) dn.onclick = () => { delConfirm = false; render(); };
+  $("#bkExport").onclick = exportBackup;
+  $("#bkImportBtn").onclick = () => $("#bkImport").click();
+  $("#bkImport").onchange = ev => { const f = ev.target.files && ev.target.files[0]; if (f) importFile(f).catch(() => toast("Couldn't read that file.")); ev.target.value = ""; };
+  const go = $("#gout"); if (go) go.onclick = signOut;
+  const dy = $("#d_yes"); if (dy) dy.onclick = async () => {
+    const list = S.expenses.filter(e => e.archivedAt && monthKey(e.date) === delMonth);
+    delConfirm = false; dy.disabled = true;
+    let n = 0; for (const e of list) { try { await store.remove(e.id); n++; } catch (er) {} }
+    toast(`Deleted ${n} archived expense${n === 1 ? "" : "s"}`); delMonth = null; render();
+  };
+}
+
+// ---------- main render ----------
+function render() {
+  if (S.renderLock) return;
+  const active = document.activeElement;
+  const keepSay = active && active.id === "say" ? {v: active.value, s: active.selectionStart} : null;
+  const sayVal = $("#say") ? $("#say").value : "";
+  renderTabs();
+  $("#syncState").textContent = S.mode === "loading" ? "Loading…" : (S.fx ? `Rates ${S.fx.date}` : "No rates yet");
+  const v = $("#view");
+  if (S.tab === "log") { v.innerHTML = viewLog(); bindLog(v); const ta = $("#say"); if (ta) { ta.value = sayVal; if (keepSay) { ta.focus(); try { ta.setSelectionRange(keepSay.s, keepSay.s); } catch (e) {} } } }
+  else if (S.tab === "history") { v.innerHTML = viewHistory(); bindHistory(v); }
+  else if (S.tab === "reports") { v.innerHTML = viewReports(); bindReports(v); }
+  else if (S.tab === "archive") { v.innerHTML = viewArchive(); bindArchive(v); }
+  else { v.innerHTML = viewSettings(); bindSettings(v); }
+}
+// Live data shouldn't wipe a field the person is typing in: defer until they leave it.
+function liveRender() {
+  const a = document.activeElement;
+  if (a && a.closest && a.closest("#view") && a.id !== "say" && a.id !== "hq" && (a.tagName === "INPUT" || a.tagName === "SELECT" || a.tagName === "TEXTAREA")) { S.dirty = true; return; }
+  render();
+}
+document.addEventListener("focusout", () => setTimeout(() => { if (S.dirty) { S.dirty = false; render(); } }, 0));
+
+// ---------- boot ----------
+handleOAuthReturn();
+render();
+(async () => {
+  try { store = await makeIdbStore(); } catch (e) { store = makeLocalStore(); }
+  S.mode = "device";
+  try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
+  render();
+  refreshRates();
+  recheckProvisional();
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshRates(); });
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+})();
+})();
+</script>
+</body>
+</html>
