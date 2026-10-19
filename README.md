@@ -95,6 +95,7 @@ Important: the icon app keeps its own storage, separate from Safari. Always use 
 - **Speaking:** tap the round microphone button and allow microphone and speech recognition when asked. If the button doesn't respond, tap the text box and use the microphone key on the keyboard instead (turn on Settings → General → Keyboard → **Enable Dictation**).
 - **Exchange rates:** loaded automatically when you're online and cached for offline use.
 - **Archive:** Archive tab → **Sign in with Google** → choose your account. Google warns that the app isn't verified: tap **Continue** (it's your own app). Then **Choose folder** or **Choose existing sheet**, and tap **Archive**.
+- **One archive file:** when you archive to a folder, everything goes into one Google Sheet (named "Expense Log" by default; you can change the name in the Archive tab). If that sheet already exists in the folder, new rows are added to it and rows already in it are skipped.
 - **Moving records from the claude.ai version:** in the claude.ai version, go to Reports → **Download … as CSV** for each month. Save the file to the Files app. Then in this app: Settings → **Import file** → pick the CSV.
 
 ## Keeping your data safe

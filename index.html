@@ -171,7 +171,7 @@ const MONTHS = ["january","february","march","april","may","june","july","august
 const MON_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const WEEKDAYS = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
 const DRIVE = "Google Drive";
-const DEFAULT_SETTINGS = {defaultCurrency:"JPY", trip:null, cardFeePct:0, autoSaveSecs:3, monthlyBudget:0, archiveDest:null, merchantMap:{}, lastPayment:""};
+const DEFAULT_SETTINGS = {archiveFileName:"Expense Log", defaultCurrency:"JPY", trip:null, cardFeePct:0, autoSaveSecs:3, monthlyBudget:0, archiveDest:null, merchantMap:{}, lastPayment:""};
 
 // ---------- state ----------
 const S = { mode:"loading", expenses:[], settings:{...DEFAULT_SETTINGS}, fx:null, fxdays:[], archives:[], tab:"log", pending:[], editingPending:false, answer:null, histQuery:"", histCat:"", repMonth:null, toast:null };
@@ -925,7 +925,7 @@ function viewArchive() {
   const months = [...new Set(S.expenses.map(e => monthKey(e.date)))].sort().reverse();
   const rows = archiveRows(), sum = rows.reduce((a, e) => a + (e.amountJPY || 0), 0), d = A.dest;
   const signed = !!getToken();
-  const fileName = A.period === "all" ? `Expenses ${today()}` : `Expenses ${A.period}`;
+  const fileName = archiveName();
   const hist = [...S.archives].sort((a, b) => (b.archivedAt || "").localeCompare(a.archivedAt || ""));
   if (!driveReady()) return `<div class="banner">Google Drive isn't set up yet. Add your Google Cloud keys to <b>config.js</b> (see the README). Meanwhile you can download CSV files from Reports or back up from Settings.</div>`;
   return `<section class="card" style="display:flex;flex-direction:column;gap:12px">
@@ -938,8 +938,9 @@ function viewArchive() {
       ${d ? `<div><strong>${d.mode === "file" ? "Add to existing sheet" : "New sheet in folder"}</strong><div class="small muted" style="overflow-wrap:anywhere">${esc(d.title)}</div></div>` : `<span class="muted">Choose where archives go</span>`}
       <div class="row"><button id="pkFolder" class="grow">Choose folder</button><button id="pkFile" class="grow">Choose existing sheet</button></div>
       <button class="link" id="pkRoot" style="align-self:flex-start">Use My Drive (top level)</button>
+      ${d && d.mode === "folder" ? `<label class="small muted" style="display:flex;flex-direction:column;gap:4px">Archive file name<input id="afn" value="${esc(fileName)}"></label>` : ""}
     </div>
-    <div class="small muted">${rows.length} expense${rows.length === 1 ? "" : "s"} · ${yen(sum)}${d && d.mode === "folder" ? ` · creates Google Sheet “${esc(fileName)}”` : ""}${d && d.mode === "file" ? " · new rows are added at the bottom; rows already in the sheet are skipped" : ""}</div>
+    <div class="small muted">${rows.length} expense${rows.length === 1 ? "" : "s"} · ${yen(sum)}${d && d.mode === "folder" ? ` · added to Google Sheet “${esc(fileName)}” in this folder (created the first time; rows already in it are skipped)` : ""}${d && d.mode === "file" ? " · new rows are added at the bottom; rows already in the sheet are skipped" : ""}</div>
     ${A.status ? `<div class="small status-ok">${A.status}</div>` : ""}${A.error ? `<div class="small status-err">${esc(A.error)}</div>` : ""}
     <button class="primary" id="ago" ${!d || !rows.length || A.busy ? "disabled" : ""}>${A.busy ? "Archiving…" : `Archive ${rows.length} expense${rows.length === 1 ? "" : "s"}`}</button>
     <div class="hint">Archived expenses stay in the app until you delete them yourself. Deleting them here never touches your Drive files.</div>
@@ -955,6 +956,29 @@ function bindArchive() {
   $("#pkFile").onclick = () => openPicker("file");
   $("#pkRoot").onclick = () => { A.dest = {mode: "folder", id: "root", title: "My Drive"}; store.saveSettings({archiveDest: A.dest}); render(); };
   $("#ago").onclick = runArchive;
+  const afn = $("#afn"); if (afn) afn.onchange = () => store.saveSettings({archiveFileName: afn.value.trim() || "Expense Log"});
+}
+const archiveName = () => (S.settings.archiveFileName || "Expense Log").trim() || "Expense Log";
+async function appendToSheet(sheetId, rows) {
+  const base = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}/values/`;
+  const head = await gfetch(base + encodeURIComponent("1:1"));
+  const header = (head.values && head.values[0]) || [];
+  let newRows, skipped = 0;
+  if (!header.length) {
+    newRows = [COLS, ...rows.map(rowOf)];
+  } else {
+    const idCol = header.findIndex(h => String(h).trim().toLowerCase() === "entry id");
+    if (idCol < 0) throw {code: "layout", message: "That sheet doesn't have this app's columns (no “Entry ID” column). Choose another sheet, or use a different archive file name."};
+    const L = colLetter(idCol);
+    const ids = await gfetch(base + encodeURIComponent(`${L}:${L}`));
+    const existing = new Set(((ids.values) || []).slice(1).map(r => r[0]));
+    const fresh = rows.filter(e => !existing.has(e.id));
+    skipped = rows.length - fresh.length;
+    const map = COLS.map(c => header.findIndex(h => String(h).trim().toLowerCase() === c.toLowerCase()));
+    newRows = fresh.map(e => { const r = rowOf(e); const out = header.map(() => ""); map.forEach((j, i) => { if (j >= 0) out[j] = r[i]; }); return out; });
+  }
+  if (newRows.length) await gfetch(base + encodeURIComponent("A1") + ":append?valueInputOption=RAW&insertDataOption=INSERT_ROWS", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({values: newRows})});
+  return {added: rows.length - skipped, skipped};
 }
 function colLetter(n) { let s = ""; n++; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
 async function runArchive() {
@@ -966,33 +990,24 @@ async function runArchive() {
   let created, mode = d.mode === "file" ? "append" : "new", added = rows.length, skipped = 0;
   try {
     if (d.mode === "folder") {
-      const title = A.period === "all" ? `Expenses ${today()}` : `Expenses ${A.period}`;
-      const meta = {name: title, mimeType: "application/vnd.google-apps.spreadsheet"};
-      if (d.id && d.id !== "root") meta.parents = [d.id];
-      const b = "vel" + Date.now();
-      const body = `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: text/csv; charset=UTF-8\r\n\r\n${toCsv([COLS, ...rows.map(rowOf)])}\r\n--${b}--`;
-      const f = await gfetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink", {method: "POST", headers: {"Content-Type": `multipart/related; boundary=${b}`}, body});
-      created = {id: f.id, title: f.name, url: f.webViewLink};
-    } else {
-      const base = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(d.id)}/values/`;
-      const head = await gfetch(base + encodeURIComponent("1:1"));
-      const header = (head.values && head.values[0]) || [];
-      let newRows;
-      if (!header.length) {
-        newRows = [COLS, ...rows.map(rowOf)];
+      const title = archiveName();
+      const parent = d.id && d.id !== "root" ? d.id : "root";
+      const q = `name = '${title.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}' and '${parent}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`;
+      const found = await gfetch("https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(q) + "&fields=files(id,name,webViewLink)&pageSize=1&orderBy=createdTime");
+      const f0 = found.files && found.files[0];
+      if (f0) {
+        const r = await appendToSheet(f0.id, rows); added = r.added; skipped = r.skipped; mode = "append";
+        created = {id: f0.id, title: f0.name, url: f0.webViewLink};
       } else {
-        const idCol = header.findIndex(h => String(h).trim().toLowerCase() === "entry id");
-        if (idCol < 0) throw {code: "layout", message: "That sheet doesn't have this app's columns (no “Entry ID” column). Choose another sheet, or archive to a new sheet in a folder."};
-        const L = colLetter(idCol);
-        const ids = await gfetch(base + encodeURIComponent(`${L}:${L}`));
-        const existing = new Set(((ids.values) || []).slice(1).map(r => r[0]));
-        const fresh = rows.filter(e => !existing.has(e.id));
-        skipped = rows.length - fresh.length;
-        const map = COLS.map(c => header.findIndex(h => String(h).trim().toLowerCase() === c.toLowerCase()));
-        newRows = fresh.map(e => { const r = rowOf(e); const out = header.map(() => ""); map.forEach((j, i) => { if (j >= 0) out[j] = r[i]; }); return out; });
+        const meta = {name: title, mimeType: "application/vnd.google-apps.spreadsheet"};
+        if (parent !== "root") meta.parents = [parent];
+        const b = "vel" + Date.now();
+        const body = `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: text/csv; charset=UTF-8\r\n\r\n${toCsv([COLS, ...rows.map(rowOf)])}\r\n--${b}--`;
+        const f = await gfetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink", {method: "POST", headers: {"Content-Type": `multipart/related; boundary=${b}`}, body});
+        created = {id: f.id, title: f.name, url: f.webViewLink};
       }
-      added = header.length ? newRows.length : rows.length;
-      if (newRows.length) await gfetch(base + encodeURIComponent("A1") + ":append?valueInputOption=RAW&insertDataOption=INSERT_ROWS", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({values: newRows})});
+    } else {
+      const r = await appendToSheet(d.id, rows); added = r.added; skipped = r.skipped;
       created = {id: d.id, title: d.title, url: d.url};
     }
     const now = new Date().toISOString();
@@ -1088,6 +1103,7 @@ function viewSettings() {
   if (delMonth && !archMonths.includes(delMonth)) delMonth = null;
   const delCount = delMonth ? S.expenses.filter(e => e.archivedAt && monthKey(e.date) === delMonth).length : 0;
   const fx = S.fx;
+  const mmKeys = S.mmKeys = Object.keys(st.merchantMap || {}).sort();
   return `<section class="card form">
     <h2 class="full">Currency</h2>
     <label>Default currency<select id="s_cur">${curs.map(c => `<option ${c === st.defaultCurrency ? "selected" : ""}>${c}</option>`).join("")}</select></label>
@@ -1105,7 +1121,13 @@ function viewSettings() {
     <h2 class="full">Logging</h2>
     <label>Monthly budget (JPY)<input id="s_budget" inputmode="numeric" value="${esc(st.monthlyBudget || "")}" placeholder="None"></label>
     <label>Auto-save after<select id="s_auto">${[[0,"Off (always confirm)"],[3,"3 seconds"],[5,"5 seconds"],[8,"8 seconds"]].map(([v, l]) => `<option value="${v}" ${Number(st.autoSaveSecs) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
-    <div class="full small muted">Learned shop categories: ${Object.keys(st.merchantMap || {}).length}. ${Object.keys(st.merchantMap || {}).length ? '<button class="link" id="s_clearmap">Forget them</button>' : ""}</div>
+</section>
+  <section class="card" style="display:flex;flex-direction:column;gap:8px">
+    <h2>Learned shop categories</h2>
+    <div class="small muted">When you log a shop listed here, the app uses its category. Change the category, rename the shop, remove it, or add a new one.</div>
+    ${mmKeys.length ? mmKeys.map((k, i) => `<div class="row"><input class="grow" data-mm-name="${i}" value="${esc(titleCase(k))}" aria-label="Shop name"><select data-mm-cat="${i}" style="width:auto" aria-label="Category for ${esc(k)}">${CATS.map(c => `<option ${c === st.merchantMap[k] ? "selected" : ""}>${c}</option>`).join("")}</select><button class="danger" data-mm-del="${i}" aria-label="Remove ${esc(k)}">Remove</button></div>`).join("") : '<div class="small muted">None yet. Shops are learned when you save an expense with a shop name.</div>'}
+    <div class="row"><input class="grow" id="mm_new" placeholder="Add a shop, e.g. Lawson" aria-label="New shop name"><select id="mm_newcat" style="width:auto" aria-label="Category for new shop">${CATS.map(c => `<option>${c}</option>`).join("")}</select><button id="mm_add">Add</button></div>
+    ${mmKeys.length ? '<button class="link" id="s_clearmap" style="align-self:flex-start">Remove all</button>' : ""}
   </section>
   <section class="card" style="display:flex;flex-direction:column;gap:10px">
     <h2>Delete archived expenses</h2>
@@ -1131,7 +1153,13 @@ function bindSettings() {
   $("#s_auto").onchange = ev => store.saveSettings({autoSaveSecs: Number(ev.target.value)});
   const saveTrip = () => { const c = $("#t_cur").value; store.saveSettings({trip: c ? {name: $("#t_name").value.trim(), currency: c, start: (S.settings.trip && S.settings.trip.start) || today(), end: $("#t_end").value || null} : null}); };
   $("#t_cur").onchange = saveTrip; $("#t_name").onchange = saveTrip; $("#t_end").onchange = saveTrip;
-  const cm = $("#s_clearmap"); if (cm) cm.onclick = () => store.saveSettings({merchantMap:{}});
+  const cm = $("#s_clearmap"); if (cm) cm.onclick = () => store.saveSettings({merchantMap:{}}).then(render);
+  const mk = S.mmKeys || [];
+  const mmSave = m => store.saveSettings({merchantMap: m}).then(render);
+  document.querySelectorAll("[data-mm-cat]").forEach(el => el.onchange = () => { const k = mk[+el.dataset.mmCat]; mmSave({...S.settings.merchantMap, [k]: el.value}); });
+  document.querySelectorAll("[data-mm-name]").forEach(el => el.onchange = () => { const k = mk[+el.dataset.mmName]; const nk = el.value.trim().toLowerCase(); const m = {...S.settings.merchantMap}; const c = m[k]; delete m[k]; if (nk) m[nk] = c; mmSave(m); });
+  document.querySelectorAll("[data-mm-del]").forEach(el => el.onclick = () => { const m = {...S.settings.merchantMap}; delete m[mk[+el.dataset.mmDel]]; mmSave(m); });
+  $("#mm_add").onclick = () => { const n = $("#mm_new").value.trim().toLowerCase(); if (!n) { toast("Type a shop name first."); return; } mmSave({...S.settings.merchantMap, [n]: $("#mm_newcat").value}); };
   const dm = $("#d_m"); if (dm) dm.onchange = ev => { delMonth = ev.target.value || null; delConfirm = false; render(); };
   const dg = $("#d_go"); if (dg) dg.onclick = () => { delConfirm = true; render(); };
   const dn = $("#d_no"); if (dn) dn.onclick = () => { delConfirm = false; render(); };
