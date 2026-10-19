@@ -171,7 +171,7 @@ const MONTHS = ["january","february","march","april","may","june","july","august
 const MON_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const WEEKDAYS = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
 const DRIVE = "Google Drive";
-const DEFAULT_SETTINGS = {archiveFileName:"Expense Log", defaultCurrency:"JPY", trip:null, cardFeePct:0, autoSaveSecs:3, monthlyBudget:0, archiveDest:null, merchantMap:{}, lastPayment:""};
+const DEFAULT_SETTINGS = {googleAccount:"prakashrtvm@gmail.com", archiveFileName:"Expense Log", defaultCurrency:"JPY", trip:null, cardFeePct:0, autoSaveSecs:3, monthlyBudget:0, archiveDest:null, merchantMap:{}, lastPayment:""};
 
 // ---------- state ----------
 const S = { mode:"loading", expenses:[], settings:{...DEFAULT_SETTINGS}, fx:null, fxdays:[], archives:[], tab:"log", pending:[], editingPending:false, answer:null, histQuery:"", histCat:"", repMonth:null, toast:null };
@@ -875,9 +875,29 @@ const redirectUri = () => location.origin + location.pathname.replace(/index\.ht
 function getToken() { try { const t = JSON.parse(localStorage.getItem("g_tok") || "null"); if (t && t.exp > Date.now() + 60000) return t.v; } catch (e) {} return null; }
 function signIn() {
   const p = new URLSearchParams({client_id: CFG.GOOGLE_CLIENT_ID, redirect_uri: redirectUri(), response_type: "token", scope: SCOPE, include_granted_scopes: "true", state: "drive"});
+  const acct = (S.settings.googleAccount || "").trim();
+  if (acct) p.set("login_hint", acct); else p.set("prompt", "select_account");
   location.href = "https://accounts.google.com/o/oauth2/v2/auth?" + p.toString();
 }
-function signOut() { try { localStorage.removeItem("g_tok"); } catch (e) {} render(); }
+function signOut() { try { localStorage.removeItem("g_tok"); localStorage.removeItem("g_user"); } catch (e) {} S.googleUser = null; render(); }
+// After sign-in, check which Google account was used and compare it with the one set in Settings.
+async function checkGoogleUser() {
+  if (!getToken()) return;
+  try {
+    const a = await gfetch("https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName)");
+    const email = (a.user && a.user.emailAddress || "").toLowerCase();
+    S.googleUser = email;
+    try { localStorage.setItem("g_user", email); } catch (e) {}
+    const want = (S.settings.googleAccount || "").trim().toLowerCase();
+    if (want && email && email !== want) {
+      try { localStorage.removeItem("g_tok"); localStorage.removeItem("g_user"); } catch (e) {}
+      S.googleUser = null;
+      toast(`You signed in as ${email}, but Settings says ${want}. Sign in again with ${want}, or change the account in Settings.`);
+    }
+    render();
+  } catch (e) { /* offline or token expired: checked again at next sign-in */ }
+}
+function googleUserLabel() { if (S.googleUser) return S.googleUser; try { return localStorage.getItem("g_user") || ""; } catch (e) { return ""; } }
 function handleOAuthReturn() {
   if (!location.hash || location.hash.length < 2) return;
   const h = new URLSearchParams(location.hash.slice(1));
@@ -954,7 +974,7 @@ function viewArchive() {
   const hist = [...S.archives].sort((a, b) => (b.archivedAt || "").localeCompare(a.archivedAt || ""));
   if (!driveReady()) return `<div class="banner">Google Drive isn't set up yet. Add your Google Cloud keys to <b>config.js</b> (see the README). Meanwhile you can download CSV files from Reports or back up from Settings.</div>`;
   return `<section class="card" style="display:flex;flex-direction:column;gap:12px">
-    <div class="cline"><h2>Archive to Google Drive</h2>${signed ? '<span class="small status-ok">Signed in</span>' : '<button id="gsign" class="primary">Sign in with Google</button>'}</div>
+    <div class="cline"><h2>Archive to Google Drive</h2>${signed ? `<span class="small status-ok">Signed in${googleUserLabel() ? " as " + esc(googleUserLabel()) : ""}</span>` : '<button id="gsign" class="primary">Sign in with Google</button>'}</div>
     <div class="form">
       <label>Period<select id="ap"><option value="all" ${A.period === "all" ? "selected" : ""}>All periods</option>${months.map(k => `<option value="${k}" ${k === A.period ? "selected" : ""}>${monthLabel(k)}</option>`).join("")}</select></label>
       <label class="check" style="align-self:end;padding-bottom:10px"><input type="checkbox" id="ainc" ${A.includeArchived ? "checked" : ""}> Include already archived</label>
@@ -1166,7 +1186,9 @@ function viewSettings() {
     <div class="small muted">Import accepts a backup file from this app or a CSV downloaded from Reports, including from the claude.ai version. Rows already here are skipped.</div>
   </section>
   <section class="card" style="display:flex;flex-direction:column;gap:8px"><h2>Google account</h2>
-    <div class="small muted">${!driveReady() ? "Not set up: add your keys to config.js." : getToken() ? "Signed in. Sign-in lasts about an hour, then the app asks again when you archive." : "Not signed in. You'll be asked when you archive."}</div>
+    <label class="small muted" style="display:flex;flex-direction:column;gap:4px">Google account for Drive archive<input id="g_acct" type="email" inputmode="email" autocomplete="email" value="${esc(st.googleAccount || "")}" placeholder="name@gmail.com"></label>
+    <div class="small muted">Google sign-in opens with this account. If you sign in with a different one, the app asks you to sign in again. Leave it empty to choose an account each time. The account must be a test user in your Google Cloud project.</div>
+    <div class="small muted">${!driveReady() ? "Not set up: add your keys to config.js." : getToken() ? `Signed in${googleUserLabel() ? " as <b>" + esc(googleUserLabel()) + "</b>" : ""}. Sign-in lasts about an hour, then the app asks again when you archive.` : "Not signed in. You'll be asked when you archive."}</div>
     ${getToken() ? '<button id="gout" style="align-self:flex-start">Sign out</button>' : ""}
   </section>`;
 }
@@ -1192,6 +1214,13 @@ function bindSettings() {
   $("#bkImportBtn").onclick = () => $("#bkImport").click();
   $("#bkImport").onchange = ev => { const f = ev.target.files && ev.target.files[0]; if (f) importFile(f).catch(() => toast("Couldn't read that file.")); ev.target.value = ""; };
   const go = $("#gout"); if (go) go.onclick = signOut;
+  const ga = $("#g_acct"); if (ga) ga.onchange = () => {
+    const v = ga.value.trim().toLowerCase();
+    if (v && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) { toast("That doesn't look like an email address."); return; }
+    const cur = googleUserLabel();
+    store.saveSettings({googleAccount: v});
+    if (cur && v && cur !== v) { signOut(); toast("Signed out. Sign in again with " + v + " when you archive."); }
+  };
   const dy = $("#d_yes"); if (dy) dy.onclick = async () => {
     const list = S.expenses.filter(e => e.archivedAt && monthKey(e.date) === delMonth);
     delConfirm = false; dy.disabled = true;
@@ -1232,6 +1261,7 @@ render();
   try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
   render();
   refreshRates();
+  checkGoogleUser();
   recheckProvisional();
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshRates(); });
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
