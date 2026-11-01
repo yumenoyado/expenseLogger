@@ -171,6 +171,7 @@ const MONTHS = ["january","february","march","april","may","june","july","august
 const MON_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const WEEKDAYS = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
 const DRIVE = "Google Drive";
+const APP_VERSION = "v12";
 // Your SMBC card alert sheet. Used until you choose another one in Settings (no file picker needed on iPhone).
 const SMBC_SHEET = {id: "1Z1x5XFZpE9xBjBbyHeNPp5j3I1VmlQpNYqffxK0mhg4", title: "SMBC Card Expenses (三井住友カード)", url: "https://docs.google.com/spreadsheets/d/1Z1x5XFZpE9xBjBbyHeNPp5j3I1VmlQpNYqffxK0mhg4/edit"};
 const DEFAULT_SETTINGS = {googleAccount:"prakashrtvm@gmail.com", archiveFileName:"Expense Log", defaultCurrency:"JPY", trip:null, cardFeePct:0, autoSaveSecs:3, monthlyBudget:0, archiveDest:null, merchantMap:{}, lastPayment:"", cardSheet:null, cardTab:"Alerts", cardSeen:{}, cardLastCheck:null};
@@ -961,6 +962,11 @@ function loadScript(src) {
   return new Promise((res, rej) => { if (document.querySelector(`script[src="${src}"]`)) return res(); const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = () => rej({code: "network"}); document.head.appendChild(s); });
 }
 async function openPicker(mode, thenCheck) {
+  // Google's file picker needs third-party cookies, which the iPhone home-screen app blocks ("Can't access your Google Account").
+  if (isIOS && isStandalone) {
+    toast(mode === "cards" ? "Choosing a file doesn't work in the iPhone app. Paste the sheet's link below, or choose it once on a computer at the app address." : "Choosing a file or folder doesn't work in the iPhone app. Choose it once on a computer at the app address, or use My Drive (top level).");
+    return;
+  }
   const tok = getToken();
   if (!tok) { signIn(mode === "cards" ? (thenCheck ? "cards" : "cardsheet") : "drive"); return; }
   try {
@@ -1440,7 +1446,7 @@ function render() {
   const sayVal = $("#say") ? $("#say").value : "";
   const memoVal = $("#memo") ? $("#memo").value : "";
   renderTabs();
-  $("#syncState").textContent = S.mode === "loading" ? "Loading…" : (S.fx ? `Rates ${S.fx.date}` : "No rates yet");
+  $("#syncState").textContent = (S.mode === "loading" ? "Loading…" : (S.fx ? `Rates ${S.fx.date}` : "No rates yet")) + " · " + APP_VERSION;
   const v = $("#view");
   if (S.tab === "log") { v.innerHTML = viewLog(); bindLog(v); const ta = $("#say"); if (ta) { ta.value = sayVal; const mm = $("#memo"); if (mm) mm.value = memoVal; if (keepSay) { ta.focus(); try { ta.setSelectionRange(keepSay.s, keepSay.s); } catch (e) {} } } }
   else if (S.tab === "history") { v.innerHTML = viewHistory(); bindHistory(v); }
