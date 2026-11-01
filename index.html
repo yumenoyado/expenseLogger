@@ -171,7 +171,7 @@ const MONTHS = ["january","february","march","april","may","june","july","august
 const MON_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const WEEKDAYS = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
 const DRIVE = "Google Drive";
-const DEFAULT_SETTINGS = {googleAccount:"prakashrtvm@gmail.com", archiveFileName:"Expense Log", defaultCurrency:"JPY", trip:null, cardFeePct:0, autoSaveSecs:3, monthlyBudget:0, archiveDest:null, merchantMap:{}, lastPayment:""};
+const DEFAULT_SETTINGS = {googleAccount:"prakashrtvm@gmail.com", archiveFileName:"Expense Log", defaultCurrency:"JPY", trip:null, cardFeePct:0, autoSaveSecs:3, monthlyBudget:0, archiveDest:null, merchantMap:{}, lastPayment:"", cardSheet:null, cardTab:"Alerts", cardSeen:{}, cardLastCheck:null};
 
 // ---------- state ----------
 const S = { mode:"loading", expenses:[], settings:{...DEFAULT_SETTINGS}, fx:null, fxdays:[], archives:[], tab:"log", pending:[], editingPending:false, answer:null, histQuery:"", histCat:"", repMonth:null, toast:null };
@@ -685,6 +685,7 @@ function viewLog() {
     <div class="hint">Tap the microphone button and speak (tap it again to stop; say “delete” to remove the last word), or use the microphone key on the keyboard. Check the text, then tap Add expense. Try: “Taxi 25 dollars by card yesterday”, “Coffee 450 and sandwich 520”, “Dinner 6000 yen memo team dinner with client”, “How much on food this month?”, “Archive September”.</div>
   </form>
   ${pend}${ans}
+  ${driveReady() ? cardPanelHTML() : ""}
   <section class="card"><div class="top"><h2>Recent</h2>${S.expenses.length > 6 ? '<button class="link" id="seeAll">See all</button>' : ""}</div>
     ${recent.length ? `<div class="list">${recent.map(itemHTML).join("")}</div>` : `<div class="empty">No expenses yet. Your first one appears here after you add it above.</div>`}
   </section>`;
@@ -753,6 +754,7 @@ function bindLog(root) {
     savePending();
   };
   const pc = $("#pCancel"); if (pc) pc.onclick = () => { S.pending = []; S.editingPending = false; render(); };
+  if (driveReady()) bindCardPanel();
   bindItems(root);
 }
 
@@ -794,6 +796,7 @@ function viewReports() {
   const dmax = Math.max(1, ...daily);
   const W = 300, H = 70, bw = W / days;
   const byCur = {}; rows.forEach(e => { const k = e.originalCurrency; byCur[k] = byCur[k] || {orig:0, jpy:0, n:0}; byCur[k].orig += e.originalAmount; byCur[k].jpy += e.amountJPY||0; byCur[k].n++; });
+  const byPay = {}; rows.forEach(e => { const k = e.payment || "Not set"; byPay[k] = byPay[k] || {jpy:0, n:0}; byPay[k].jpy += e.amountJPY||0; byPay[k].n++; });
   const biz = rows.filter(e => e.isBusiness).reduce((a,e) => a + (e.amountJPY||0), 0);
   const budget = Number(S.settings.monthlyBudget || 0);
   return `<div class="row"><label for="rm" class="small muted">Month</label><select id="rm" style="width:auto">${months.map(k => `<option value="${k}" ${k === mk ? "selected" : ""}>${monthLabel(k)}</option>`).join("")}</select></div>
@@ -811,6 +814,8 @@ function viewReports() {
     <div class="cline small muted num"><span>1</span><span>${Math.ceil(days/2)}</span><span>${days}</span></div></section>
   <section class="card"><h2>By currency</h2>${Object.keys(byCur).length ? Object.entries(byCur).map(([c, v]) => `<div class="cline" style="padding:6px 0"><span>${esc(c)} <span class="small muted">· ${v.n}</span></span><span class="num">${c === "JPY" ? yen(v.jpy) : `${esc(fmtAmt(v.orig, c))} → ${yen(v.jpy)}`}</span></div>`).join("") : '<div class="empty">—</div>'}
     ${biz ? `<div class="cline" style="padding:6px 0;border-top:1px solid var(--line)"><span>Business expenses</span><span class="num">${yen(biz)}</span></div>` : ""}</section>
+  <section class="card"><h2>By payment</h2>${Object.keys(byPay).length ? Object.entries(byPay).sort((a,b) => b[1].jpy - a[1].jpy).map(([k, v]) => `<div class="cline" style="padding:6px 0"><span>${esc(k)} <span class="small muted">· ${v.n}</span></span><span class="num">${yen(v.jpy)}</span></div>`).join("") : '<div class="empty">—</div>'}
+    <div class="small muted">Compare the Card total with your card statement to spot anything missed.</div></section>
   <div class="row"><button class="grow" id="csvBtn">Download ${monthLabel(mk)} as CSV</button><button class="primary grow" id="toArch">Archive to Drive</button></div>`;
 }
 function bindReports() {
@@ -894,8 +899,8 @@ const SCOPE = "https://www.googleapis.com/auth/drive.file";
 const driveReady = () => !!(CFG.GOOGLE_CLIENT_ID && CFG.GOOGLE_API_KEY && CFG.GOOGLE_APP_ID);
 const redirectUri = () => location.origin + location.pathname.replace(/index\.html$/, "");
 function getToken() { try { const t = JSON.parse(localStorage.getItem("g_tok") || "null"); if (t && t.exp > Date.now() + 60000) return t.v; } catch (e) {} return null; }
-function signIn() {
-  const p = new URLSearchParams({client_id: CFG.GOOGLE_CLIENT_ID, redirect_uri: redirectUri(), response_type: "token", scope: SCOPE, include_granted_scopes: "true", state: "drive"});
+function signIn(state) {
+  const p = new URLSearchParams({client_id: CFG.GOOGLE_CLIENT_ID, redirect_uri: redirectUri(), response_type: "token", scope: SCOPE, include_granted_scopes: "true", state: typeof state === "string" ? state : "drive"});
   const acct = (S.settings.googleAccount || "").trim();
   if (acct) p.set("login_hint", acct); else p.set("prompt", "select_account");
   location.href = "https://accounts.google.com/o/oauth2/v2/auth?" + p.toString();
@@ -922,11 +927,13 @@ function googleUserLabel() { if (S.googleUser) return S.googleUser; try { return
 function handleOAuthReturn() {
   if (!location.hash || location.hash.length < 2) return;
   const h = new URLSearchParams(location.hash.slice(1));
+  const back = h.get("state") === "cards" ? "log" : h.get("state") === "cardsheet" ? "settings" : "archive";
   if (h.get("access_token")) {
     try { localStorage.setItem("g_tok", JSON.stringify({v: h.get("access_token"), exp: Date.now() + Number(h.get("expires_in") || 3600) * 1000})); } catch (e) {}
-    history.replaceState(null, "", redirectUri()); S.tab = "archive"; setTimeout(() => toast("Signed in to Google Drive"), 300);
+    history.replaceState(null, "", redirectUri()); S.tab = back; setTimeout(() => toast("Signed in to Google"), 300);
+    if (h.get("state") === "cards") S.autoCardCheck = true;
   } else if (h.get("error")) {
-    history.replaceState(null, "", redirectUri()); S.tab = "archive"; setTimeout(() => toast("Google sign-in didn't finish: " + h.get("error")), 300);
+    history.replaceState(null, "", redirectUri()); S.tab = back; setTimeout(() => toast("Google sign-in didn't finish: " + h.get("error")), 300);
   }
 }
 async function gfetch(url, opts = {}) {
@@ -951,23 +958,28 @@ function driveMsg(e) {
 function loadScript(src) {
   return new Promise((res, rej) => { if (document.querySelector(`script[src="${src}"]`)) return res(); const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = () => rej({code: "network"}); document.head.appendChild(s); });
 }
-async function openPicker(mode) {
+async function openPicker(mode, thenCheck) {
   const tok = getToken();
-  if (!tok) { signIn(); return; }
+  if (!tok) { signIn(mode === "cards" ? (thenCheck ? "cards" : "cardsheet") : "drive"); return; }
   try {
     await loadScript("https://apis.google.com/js/api.js");
     await new Promise(r => gapi.load("picker", r));
-  } catch (e) { A.error = driveMsg(e); render(); return; }
+  } catch (e) { if (mode === "cards") toast(driveMsg(e)); else { A.error = driveMsg(e); render(); } return; }
   const P = google.picker;
   const view = mode === "folder"
     ? new P.DocsView(P.ViewId.FOLDERS).setIncludeFolders(true).setSelectFolderEnabled(true).setMimeTypes("application/vnd.google-apps.folder")
     : new P.DocsView(P.ViewId.SPREADSHEETS).setMode(P.DocsViewMode.LIST);
   new P.PickerBuilder()
     .setAppId(CFG.GOOGLE_APP_ID).setDeveloperKey(CFG.GOOGLE_API_KEY).setOAuthToken(tok)
-    .addView(view).setTitle(mode === "folder" ? "Choose a folder for new archive files" : "Choose a sheet to add to")
-    .setCallback(d => {
+    .addView(view).setTitle(mode === "folder" ? "Choose a folder for new archive files" : mode === "cards" ? "Choose your card alert sheet (SMBC Card Expenses)" : "Choose a sheet to add to")
+    .setCallback(async d => {
       if (d.action !== P.Action.PICKED || !d.docs || !d.docs[0]) return;
       const doc = d.docs[0];
+      if (mode === "cards") {
+        await store.saveSettings({cardSheet: {id: doc.id, title: doc.name, url: doc.url || `https://docs.google.com/spreadsheets/d/${doc.id}/edit`}});
+        C = null; render(); if (thenCheck) checkCardAlerts(); else toast("Card sheet set: " + doc.name);
+        return;
+      }
       A.dest = mode === "folder" ? {mode: "folder", id: doc.id, title: doc.name} : {mode: "file", id: doc.id, title: doc.name, url: doc.url || `https://docs.google.com/spreadsheets/d/${doc.id}/edit`};
       A.error = ""; store.saveSettings({archiveDest: A.dest}); render();
     })
@@ -1146,7 +1158,7 @@ function renderSheet() {
   $("#sdup").onclick = async () => {
     collect();
     const x = {...E.data}; delete x.id;
-    x.date = today(); x.archivedAt = null; x.archiveFileId = null; x.source = "manual"; x.createdAt = x.updatedAt = new Date().toISOString();
+    delete x.cardEntryId; delete x.alertTime; x.date = today(); x.archivedAt = null; x.archiveFileId = null; x.source = "manual"; x.createdAt = x.updatedAt = new Date().toISOString();
     if (x.rateStatus !== "statement" && x.rateStatus !== "manual") applyConversion(x);
     E = null; renderSheet();
     try { await store.add(x); toast("Duplicated for today"); } catch (er) { onDbErr(er); }
@@ -1158,6 +1170,162 @@ function collect() {
   x.description = v("e_description"); x.originalAmount = Number(String(v("e_originalAmount")).replace(/,/g, "")); x.originalCurrency = v("e_originalCurrency");
   x.category = v("e_category"); x.date = v("e_date") || x.date; x.merchant = v("e_merchant"); x.payment = v("e_payment"); x.trip = v("e_trip"); x.notes = v("e_notes");
   x.isBusiness = document.getElementById("e_isBusiness").checked;
+}
+
+
+// ---------- card alerts (SMBC sheet → daily expenses) ----------
+// Reads the Alerts tab of the card sheet you picked, lists alerts not yet added, and adds the ones you tick.
+// Each alert's Entry ID is remembered (settings.cardSeen), so an alert is never offered twice, even if the expense is deleted later.
+let C = null;
+const CARD_WORDS = {
+  "Food & Drink": ["restaurant","cafe","coffee","bar","izakaya","rocketnow","rocket now","demae","wolt","ubereats","mcdonald","starbucks","doutor","tullys","kfc","mos burger","sushi","ramen","yakiniku","dining","bistro","grill","kitchen","bakery","レストラン","カフェ","珈琲","コーヒー","喫茶","居酒屋","食堂","ラーメン","寿司","焼肉","マクドナルド","スターバックス","ドトール","すき家","吉野家","松屋","セブン","ローソン","ファミリーマート"],
+  "Groceries": ["supermarket","aeon","seiyu","costco","ito yokado","life","summit","maruetsu","york","スーパー","イオン","西友","コストコ","イトーヨーカドー","ライフ","業務スーパー","オーケー","まいばすけっと","サミット","マルエツ","ヨークマート"],
+  "Transport": ["eneos","idemitsu","cosmo","shell","parking","taxi","go taxi","jr east","jr 東日本","nexco","etc","ガソリン","石油","パーキング","駐車","タクシー","高速"],
+  "Travel": ["hotel","airbnb","ana","jal","peach","jetstar","booking.com","expedia","agoda","jalan","rakuten travel","ホテル","旅館","航空","じゃらん"],
+  "Shopping": ["amazon","amzn","rakuten","uniqlo","yodobashi","bic camera","biccamera","nitori","daiso","muji","don quijote","donki","apple","ディスカウント","ドン・キホーテ","ユニクロ","ヨドバシ","ビックカメラ","ニトリ","ダイソー","無印","百貨店","ホームセンター","カインズ","コーナン"],
+  "Bills & Utilities": ["netflix","spotify","google","icloud","docomo","au ","softbank","rakuten mobile","tepco","tokyo gas","nhk","電気","ガス","水道","ドコモ","ソフトバンク","楽天モバイル"],
+  "Health": ["pharmacy","drug","clinic","hospital","dental","matsukiyo","sundrug","welcia","tsuruha","ドラッグ","薬局","薬品","クリニック","病院","歯科","マツモトキヨシ","ウエルシア","サンドラッグ","ツルハ","スギ薬局"],
+  "Entertainment": ["cinema","toho","karaoke","steam","playstation","nintendo","映画","カラオケ"],
+  "Education": ["kinokuniya","tsutaya","book","udemy","書店","紀伊國屋","丸善","ジュンク堂"]
+};
+const cardCompact = s => String(s || "").normalize("NFKC").toLowerCase().replace(/[\s　・･\-_.,'"()（）]+/g, "");
+// Shop key used for learning: half-width, lower case, single spaces, without the branch name (…店, …支店).
+function cardShopKey(m) {
+  let s = String(m || "").normalize("NFKC").replace(/[\s　]+/g, " ").trim();
+  s = s.replace(/株式会社|\(株\)|（株）/g, "").trim();
+  const parts = s.split(" ");
+  if (parts.length > 1 && /(店|支店|営業所|号店|ショップ)$/.test(parts[parts.length - 1])) parts.pop();
+  return parts.join(" ").toLowerCase().trim();
+}
+// Learned category first (exact shop, then a learned shop name contained in this one), then keywords.
+function cardCategory(merchant) {
+  const map = S.settings.merchantMap || {};
+  const want = cardCompact(cardShopKey(merchant)), full = cardCompact(merchant);
+  let best = null;
+  for (const [k, c] of Object.entries(map)) {
+    const kc = cardCompact(cardShopKey(k));
+    if (!kc) continue;
+    if (kc === want) return {category: c, how: "learned"};
+    if (kc.length >= 4 && (full.includes(kc) || (want.length >= 4 && kc.includes(want))) && (!best || kc.length > best.len)) best = {category: c, len: kc.length};
+  }
+  if (best) return {category: best.category, how: "learned"};
+  for (const [c, words] of Object.entries(CARD_WORDS)) for (const w of words) { const wc = cardCompact(w); if (wc.length >= 3 ? full.includes(wc) : (" " + String(merchant).toLowerCase() + " ").includes(" " + w + " ")) return {category: c, how: "keyword"}; }
+  for (const [c, words] of Object.entries(CAT_WORDS)) for (const w of words) { const wc = cardCompact(w); if (wc.length >= 5 && full.includes(wc)) return {category: c, how: "keyword"}; }
+  return {category: "Other", how: "none"};
+}
+const cardDisplayName = m => { const s = String(m || "").normalize("NFKC").replace(/[\s　]+/g, " ").trim(); return /^[\x20-\x7e]+$/.test(s) && s === s.toUpperCase() ? titleCase(s.toLowerCase()) : s; };
+function cardDate(v) {
+  const s = String(v || "").trim();
+  let m = s.match(/^(\d{4})[-\/.年](\d{1,2})[-\/.月](\d{1,2})/); if (m) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
+  return null;
+}
+function cardSeen() { return S.settings.cardSeen || {}; }
+async function fetchCardAlerts() {
+  const cs = S.settings.cardSheet;
+  const tab = (S.settings.cardTab || "Alerts").trim() || "Alerts";
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(cs.id)}/values/${encodeURIComponent(`'${tab.replace(/'/g, "''")}'!A1:Z`)}?valueRenderOption=FORMATTED_VALUE`;
+  let j;
+  try { j = await gfetch(url); }
+  catch (e) { if (e && e.code === "http" && e.status === 400) throw {code: "layout", message: `There's no “${tab}” tab in ${cs.title}. Check the tab name in Settings.`}; throw e; }
+  const rows = j.values || [];
+  if (!rows.length) return [];
+  const H = rows[0].map(h => String(h).trim().toLowerCase());
+  const col = (...names) => H.findIndex(h => names.includes(h));
+  const ix = {date: col("date", "利用日", "ご利用日"), time: col("time", "時刻"), merchant: col("merchant", "利用先", "ご利用先"), type: col("type"), amount: col("amount", "金額", "利用金額"), currency: col("currency", "通貨"), card: col("card", "カード"), id: col("entry id", "id"), status: col("status", "ステータス")};
+  if (ix.id < 0 || ix.amount < 0 || ix.date < 0) throw {code: "layout", message: `The “${tab}” tab needs Date, Amount and Entry ID columns.`};
+  const g = (r, k) => ix[k] >= 0 ? String(r[ix[k]] ?? "").trim() : "";
+  return rows.slice(1).map(r => ({
+    entryId: g(r, "id"), date: cardDate(g(r, "date")), time: g(r, "time"), merchant: g(r, "merchant"), type: g(r, "type"),
+    amount: Number(g(r, "amount").replace(/[,¥円\s]/g, "")), currency: (g(r, "currency") || "JPY").toUpperCase(), card: g(r, "card").replace(/\s+/g, " "), status: g(r, "status")
+  })).filter(a => a.entryId);
+}
+async function checkCardAlerts() {
+  if (!driveReady()) { toast("Google isn't set up in config.js yet."); return; }
+  if (!getToken()) { signIn("cards"); return; }
+  if (!S.settings.cardSheet) { openPicker("cards", true); return; }
+  C = {busy: true, error: "", items: [], skipped: [], info: "", showSkipped: false}; render();
+  try {
+    const all = await fetchCardAlerts();
+    const seen = cardSeen();
+    const inApp = new Set(S.expenses.filter(e => e.cardEntryId).map(e => e.cardEntryId));
+    const fresh = [], skipped = [];
+    let added = 0, bad = 0;
+    for (const a of all) {
+      if (inApp.has(a.entryId) || seen[a.entryId] === "added") { added++; continue; }
+      if (!a.date || !(a.amount > 0) || /cancel|取消|返品/i.test(a.status + " " + a.type)) { bad++; continue; }
+      const cat = cardCategory(a.merchant);
+      const jpy = a.currency === "JPY" ? a.amount : null;
+      const dup = jpy == null ? null : S.expenses.find(e => !e.cardEntryId && e.amountJPY === jpy && Math.abs(dayDiff(e.date, a.date)) <= 1);
+      const suica = /suica|スイカ|pasmo|チャージ/i.test(a.merchant);
+      const item = {...a, name: cardDisplayName(a.merchant), category: suica ? "Transport" : cat.category, how: suica ? "suica" : cat.how, dup: dup ? `${dup.description || dup.category} ${yen(dup.amountJPY)} on ${dayLabel(dup.date)}` : "", suica, checked: !dup && !suica};
+      (seen[a.entryId] === "skipped" ? skipped : fresh).push(item);
+    }
+    fresh.sort((x, y) => (x.date + x.time).localeCompare(y.date + y.time));
+    C.items = fresh; C.skipped = skipped;
+    C.info = `${all.length} alert${all.length === 1 ? "" : "s"} in the sheet · ${added} already added${skipped.length ? ` · ${skipped.length} skipped` : ""}${bad ? ` · ${bad} ignored (refund, cancelled or no amount)` : ""}`;
+    await store.saveSettings({cardLastCheck: new Date().toISOString()});
+  } catch (e) { C.error = driveMsg(e); if (e && e.code === "auth") { C.busy = false; render(); signIn("cards"); return; } }
+  C.busy = false; render();
+}
+function cardPanelHTML() {
+  const cs = S.settings.cardSheet;
+  const last = S.settings.cardLastCheck ? `Last checked ${dayLabel(S.settings.cardLastCheck.slice(0, 10))} ${new Date(S.settings.cardLastCheck).toTimeString().slice(0, 5)}` : "Not checked yet";
+  let body = "";
+  if (C && C.busy) body = '<div class="small muted">Reading card alerts…</div>';
+  else if (C && C.error) body = `<div class="small status-err">${esc(C.error)}</div>`;
+  else if (C) {
+    const list = C.showSkipped ? C.skipped : C.items;
+    const n = C.items.filter(x => x.checked).length;
+    body = `<div class="small muted">${esc(C.info)}</div>
+      ${list.length ? list.map((a, i) => `<div class="cline" style="padding:8px 0;border-top:1px solid var(--line);align-items:flex-start;gap:10px">
+        ${C.showSkipped ? "" : `<input type="checkbox" data-ca-chk="${i}" ${a.checked ? "checked" : ""} aria-label="Add ${esc(a.name)}" style="margin-top:4px;width:20px;height:20px;flex:none">`}
+        <div style="min-width:0;flex:1"><div><strong>${esc(a.name || "Card purchase")}</strong></div>
+          <div class="meta"><span class="tag">${esc(dayLabel(a.date))}${a.time ? " " + esc(a.time) : ""}</span>${a.how === "keyword" || a.how === "none" ? '<span class="tag warn">category guessed</span>' : ""}${a.dup ? `<span class="tag warn">possible duplicate: ${esc(a.dup)}</span>` : ""}${a.suica ? '<span class="tag warn">Suica top-up? usually a transfer, not an expense</span>' : ""}${a.status && !/pending/i.test(a.status) ? `<span class="tag">${esc(a.status)}</span>` : ""}</div>
+          ${C.showSkipped ? "" : `<select data-ca-cat="${i}" style="margin-top:6px;width:auto" aria-label="Category for ${esc(a.name)}">${CATS.map(c => `<option ${c === a.category ? "selected" : ""}>${c}</option>`).join("")}</select>`}
+        </div>
+        <div style="text-align:right;flex:none"><div class="camt">${a.currency === "JPY" ? yen(a.amount) : esc(fmtAmt(a.amount, a.currency))}</div>
+          <button class="link small" data-ca-${C.showSkipped ? "unskip" : "skip"}="${i}">${C.showSkipped ? "Bring back" : "Skip"}</button></div>
+      </div>`).join("") : `<div class="empty">${C.showSkipped ? "Nothing skipped." : "No new card alerts."}</div>`}
+      ${C.skipped.length || C.showSkipped ? `<button class="link small" id="caShowSk" style="align-self:flex-start">${C.showSkipped ? "Back to new alerts" : `Show ${C.skipped.length} skipped`}</button>` : ""}
+      ${!C.showSkipped && C.items.length ? `<div class="row"><button class="primary grow" id="caAdd" ${n ? "" : "disabled"}>Add ${n} selected</button><button id="caClose">Close</button></div>
+      <div class="hint">Unticked alerts are shown again next time. Tap Skip for ones you never want to add (Suica top-ups, already logged).</div>` : `<div class="row"><button id="caClose">Close</button></div>`}`;
+  }
+  return `<section class="card" style="display:flex;flex-direction:column;gap:8px">
+    <div class="cline"><h2>Card alerts</h2><span class="small muted">${cs ? esc(last) : ""}</span></div>
+    ${C ? body : `<div class="small muted">${cs ? `From “${esc(cs.title)}”, tab ${esc(S.settings.cardTab || "Alerts")}.` : "Pick your card alert sheet once (SMBC Card Expenses). After that, one tap lists the new card purchases."}</div>`}
+    ${C && C.busy ? "" : `<button id="caCheck" ${C && C.items.length ? 'class="link" style="align-self:flex-start"' : ""}>${!cs ? "Choose card sheet" : C ? "Check again" : "Check card alerts"}</button>`}
+  </section>`;
+}
+function bindCardPanel() {
+  const ck = $("#caCheck"); if (ck) ck.onclick = checkCardAlerts;
+  const cl = $("#caClose"); if (cl) cl.onclick = () => { C = null; render(); };
+  const sk = $("#caShowSk"); if (sk) sk.onclick = () => { C.showSkipped = !C.showSkipped; render(); };
+  document.querySelectorAll("[data-ca-chk]").forEach(el => el.onchange = () => { C.items[+el.dataset.caChk].checked = el.checked; render(); });
+  document.querySelectorAll("[data-ca-cat]").forEach(el => el.onchange = () => { const a = C.items[+el.dataset.caCat]; a.category = el.value; a.how = "chosen"; render(); });
+  document.querySelectorAll("[data-ca-skip]").forEach(el => el.onclick = async () => { const a = C.items.splice(+el.dataset.caSkip, 1)[0]; C.skipped.push(a); await store.saveSettings({cardSeen: {...cardSeen(), [a.entryId]: "skipped"}}); render(); });
+  document.querySelectorAll("[data-ca-unskip]").forEach(el => el.onclick = async () => { const a = C.skipped.splice(+el.dataset.caUnskip, 1)[0]; C.items.push(a); const s = {...cardSeen()}; delete s[a.entryId]; await store.saveSettings({cardSeen: s}); render(); });
+  const ad = $("#caAdd"); if (ad) ad.onclick = addCardAlerts;
+}
+async function addCardAlerts() {
+  const pick = C.items.filter(a => a.checked);
+  if (!pick.length) return;
+  const seen = {...cardSeen()}, map = {...S.settings.merchantMap}, ids = [];
+  try {
+    for (const a of pick) {
+      if (a.currency !== "JPY") await ensureRateFor(a.date);
+      const e = buildExpense({date: a.date, description: a.name, merchant: a.name, category: a.category, payment: "Card", amount: a.amount, currency: a.currency, source: "card-alert", rawTranscript: ""});
+      e.cardEntryId = a.entryId; e.card = a.card; e.alertTime = a.time; e.trip = "";
+      ids.push(await store.add(e));
+      seen[a.entryId] = "added";
+      const k = cardShopKey(a.merchant); if (k && a.category !== "Other") map[k] = a.category;
+    }
+  } catch (er) { onDbErr(er); }
+  await store.saveSettings({cardSeen: seen, merchantMap: map});
+  C.items = C.items.filter(a => !a.checked);
+  C.info = `Added ${ids.length} · ${C.items.length} left to review`;
+  if (!C.items.length) C = null;
+  render();
+  toast(`Added ${ids.length} card expense${ids.length === 1 ? "" : "s"}`, {label: "Undo", run: async () => { const s = {...cardSeen()}; for (const id of ids) { const e = S.expenses.find(x => x.id === id); if (e) delete s[e.cardEntryId]; await store.remove(id).catch(() => {}); } await store.saveSettings({cardSeen: s}); toast("Removed"); }});
 }
 
 // ---------- settings ----------
@@ -1194,6 +1362,13 @@ function viewSettings() {
     ${mmKeys.length ? mmKeys.map((k, i) => `<div class="row"><input class="grow" data-mm-name="${i}" value="${esc(titleCase(k))}" aria-label="Shop name"><select data-mm-cat="${i}" style="width:auto" aria-label="Category for ${esc(k)}">${CATS.map(c => `<option ${c === st.merchantMap[k] ? "selected" : ""}>${c}</option>`).join("")}</select><button class="danger" data-mm-del="${i}" aria-label="Remove ${esc(k)}">Remove</button></div>`).join("") : '<div class="small muted">None yet. Shops are learned when you save an expense with a shop name.</div>'}
     <div class="row"><input class="grow" id="mm_new" placeholder="Add a shop, e.g. Lawson" aria-label="New shop name"><select id="mm_newcat" style="width:auto" aria-label="Category for new shop">${CATS.map(c => `<option>${c}</option>`).join("")}</select><button id="mm_add">Add</button></div>
     ${mmKeys.length ? '<button class="link" id="s_clearmap" style="align-self:flex-start">Remove all</button>' : ""}
+  </section>
+  <section class="card" style="display:flex;flex-direction:column;gap:8px">
+    <h2>Card alerts</h2>
+    <div class="small muted">${st.cardSheet ? `Sheet: <b>${esc(st.cardSheet.title)}</b>${st.cardSheet.url ? ` · <a href="${esc(st.cardSheet.url)}" target="_blank" rel="noopener" style="color:var(--accent)">Open</a>` : ""}` : "No card sheet chosen yet."} ${Object.values(st.cardSeen || {}).filter(v => v === "added").length} alerts added, ${Object.values(st.cardSeen || {}).filter(v => v === "skipped").length} skipped.</div>
+    <label class="small muted" style="display:flex;flex-direction:column;gap:4px">Tab name<input id="c_tab" value="${esc(st.cardTab || "Alerts")}"></label>
+    <div class="row"><button id="c_pick" class="grow">${st.cardSheet ? "Change card sheet" : "Choose card sheet"}</button></div>
+    <div class="small muted">Check card alerts on the Log screen lists alerts not added yet. The app only reads this sheet; it never changes it. Categories come from Learned shop categories below, and what you choose is learned for that shop.</div>
   </section>
   <section class="card" style="display:flex;flex-direction:column;gap:10px">
     <h2>Delete archived expenses</h2>
@@ -1235,6 +1410,8 @@ function bindSettings() {
   $("#bkImportBtn").onclick = () => $("#bkImport").click();
   $("#bkImport").onchange = ev => { const f = ev.target.files && ev.target.files[0]; if (f) importFile(f).catch(() => toast("Couldn't read that file.")); ev.target.value = ""; };
   const go = $("#gout"); if (go) go.onclick = signOut;
+  const cp = $("#c_pick"); if (cp) cp.onclick = () => openPicker("cards", false);
+  const ct = $("#c_tab"); if (ct) ct.onchange = () => store.saveSettings({cardTab: ct.value.trim() || "Alerts"});
   const ga = $("#g_acct"); if (ga) ga.onchange = () => {
     const v = ga.value.trim().toLowerCase();
     if (v && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) { toast("That doesn't look like an email address."); return; }
@@ -1285,6 +1462,7 @@ render();
   refreshRates();
   checkGoogleUser();
   recheckProvisional();
+  if (S.autoCardCheck) { S.autoCardCheck = false; checkCardAlerts(); }
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshRates(); });
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 })();
