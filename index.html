@@ -171,6 +171,8 @@ const MONTHS = ["january","february","march","april","may","june","july","august
 const MON_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const WEEKDAYS = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
 const DRIVE = "Google Drive";
+// Your SMBC card alert sheet. Used until you choose another one in Settings (no file picker needed on iPhone).
+const SMBC_SHEET = {id: "1Z1x5XFZpE9xBjBbyHeNPp5j3I1VmlQpNYqffxK0mhg4", title: "SMBC Card Expenses (三井住友カード)", url: "https://docs.google.com/spreadsheets/d/1Z1x5XFZpE9xBjBbyHeNPp5j3I1VmlQpNYqffxK0mhg4/edit"};
 const DEFAULT_SETTINGS = {googleAccount:"prakashrtvm@gmail.com", archiveFileName:"Expense Log", defaultCurrency:"JPY", trip:null, cardFeePct:0, autoSaveSecs:3, monthlyBudget:0, archiveDest:null, merchantMap:{}, lastPayment:"", cardSheet:null, cardTab:"Alerts", cardSeen:{}, cardLastCheck:null};
 
 // ---------- state ----------
@@ -970,7 +972,7 @@ async function openPicker(mode, thenCheck) {
     ? new P.DocsView(P.ViewId.FOLDERS).setIncludeFolders(true).setSelectFolderEnabled(true).setMimeTypes("application/vnd.google-apps.folder")
     : new P.DocsView(P.ViewId.SPREADSHEETS).setMode(P.DocsViewMode.LIST);
   new P.PickerBuilder()
-    .setAppId(CFG.GOOGLE_APP_ID).setDeveloperKey(CFG.GOOGLE_API_KEY).setOAuthToken(tok)
+    .setAppId(CFG.GOOGLE_APP_ID).setDeveloperKey(CFG.GOOGLE_API_KEY).setOAuthToken(tok).setOrigin(location.protocol + "//" + location.host)
     .addView(view).setTitle(mode === "folder" ? "Choose a folder for new archive files" : mode === "cards" ? "Choose your card alert sheet (SMBC Card Expenses)" : "Choose a sheet to add to")
     .setCallback(async d => {
       if (d.action !== P.Action.PICKED || !d.docs || !d.docs[0]) return;
@@ -1219,14 +1221,15 @@ function cardDate(v) {
   let m = s.match(/^(\d{4})[-\/.年](\d{1,2})[-\/.月](\d{1,2})/); if (m) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
   return null;
 }
+const cardSheet = () => S.settings.cardSheet || SMBC_SHEET;
 function cardSeen() { return S.settings.cardSeen || {}; }
 async function fetchCardAlerts() {
-  const cs = S.settings.cardSheet;
+  const cs = cardSheet();
   const tab = (S.settings.cardTab || "Alerts").trim() || "Alerts";
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(cs.id)}/values/${encodeURIComponent(`'${tab.replace(/'/g, "''")}'!A1:Z`)}?valueRenderOption=FORMATTED_VALUE`;
   let j;
   try { j = await gfetch(url); }
-  catch (e) { if (e && e.code === "http" && e.status === 400) throw {code: "layout", message: `There's no “${tab}” tab in ${cs.title}. Check the tab name in Settings.`}; throw e; }
+  catch (e) { if (e && e.code === "http" && (e.status === 403 || e.status === 404)) throw {code: "layout", message: `This app isn't allowed to read ${cs.title} yet. On a computer, open the app address, tap Settings → Change card sheet and choose it once.`}; if (e && e.code === "http" && e.status === 400) throw {code: "layout", message: `There's no “${tab}” tab in ${cs.title}. Check the tab name in Settings.`}; throw e; }
   const rows = j.values || [];
   if (!rows.length) return [];
   const H = rows[0].map(h => String(h).trim().toLowerCase());
@@ -1242,7 +1245,6 @@ async function fetchCardAlerts() {
 async function checkCardAlerts() {
   if (!driveReady()) { toast("Google isn't set up in config.js yet."); return; }
   if (!getToken()) { signIn("cards"); return; }
-  if (!S.settings.cardSheet) { openPicker("cards", true); return; }
   C = {busy: true, error: "", items: [], skipped: [], info: "", showSkipped: false}; render();
   try {
     const all = await fetchCardAlerts();
@@ -1268,7 +1270,7 @@ async function checkCardAlerts() {
   C.busy = false; render();
 }
 function cardPanelHTML() {
-  const cs = S.settings.cardSheet;
+  const cs = cardSheet();
   const last = S.settings.cardLastCheck ? `Last checked ${dayLabel(S.settings.cardLastCheck.slice(0, 10))} ${new Date(S.settings.cardLastCheck).toTimeString().slice(0, 5)}` : "Not checked yet";
   let body = "";
   if (C && C.busy) body = '<div class="small muted">Reading card alerts…</div>';
@@ -1365,9 +1367,11 @@ function viewSettings() {
   </section>
   <section class="card" style="display:flex;flex-direction:column;gap:8px">
     <h2>Card alerts</h2>
-    <div class="small muted">${st.cardSheet ? `Sheet: <b>${esc(st.cardSheet.title)}</b>${st.cardSheet.url ? ` · <a href="${esc(st.cardSheet.url)}" target="_blank" rel="noopener" style="color:var(--accent)">Open</a>` : ""}` : "No card sheet chosen yet."} ${Object.values(st.cardSeen || {}).filter(v => v === "added").length} alerts added, ${Object.values(st.cardSeen || {}).filter(v => v === "skipped").length} skipped.</div>
+    <div class="small muted">Sheet: <b>${esc(cardSheet().title)}</b> · <a href="${esc(cardSheet().url)}" target="_blank" rel="noopener" style="color:var(--accent)">Open</a> ${Object.values(st.cardSeen || {}).filter(v => v === "added").length} alerts added, ${Object.values(st.cardSeen || {}).filter(v => v === "skipped").length} skipped.</div>
     <label class="small muted" style="display:flex;flex-direction:column;gap:4px">Tab name<input id="c_tab" value="${esc(st.cardTab || "Alerts")}"></label>
-    <div class="row"><button id="c_pick" class="grow">${st.cardSheet ? "Change card sheet" : "Choose card sheet"}</button></div>
+    <div class="row"><button id="c_pick" class="grow">Change card sheet</button></div>
+    <label class="small muted" style="display:flex;flex-direction:column;gap:4px">Or paste the sheet's link<input id="c_link" placeholder="https://docs.google.com/spreadsheets/d/…" inputmode="url"></label>
+    <div class="small muted">If choosing a sheet fails on iPhone (“developer key is invalid”), open the app address on a computer and choose it there once, then paste its link here.</div>
     <div class="small muted">Check card alerts on the Log screen lists alerts not added yet. The app only reads this sheet; it never changes it. Categories come from Learned shop categories below, and what you choose is learned for that shop.</div>
   </section>
   <section class="card" style="display:flex;flex-direction:column;gap:10px">
@@ -1411,6 +1415,7 @@ function bindSettings() {
   $("#bkImport").onchange = ev => { const f = ev.target.files && ev.target.files[0]; if (f) importFile(f).catch(() => toast("Couldn't read that file.")); ev.target.value = ""; };
   const go = $("#gout"); if (go) go.onclick = signOut;
   const cp = $("#c_pick"); if (cp) cp.onclick = () => openPicker("cards", false);
+  const cl = $("#c_link"); if (cl) cl.onchange = () => { const m = cl.value.match(/\/d\/([\w-]{20,})/) || cl.value.trim().match(/^([\w-]{20,})$/); if (!m) { toast("That doesn't look like a Google Sheets link."); return; } store.saveSettings({cardSheet: {id: m[1], title: m[1] === SMBC_SHEET.id ? SMBC_SHEET.title : "Card sheet", url: `https://docs.google.com/spreadsheets/d/${m[1]}/edit`}}).then(() => { C = null; render(); toast("Card sheet set"); }); };
   const ct = $("#c_tab"); if (ct) ct.onchange = () => store.saveSettings({cardTab: ct.value.trim() || "Alerts"});
   const ga = $("#g_acct"); if (ga) ga.onchange = () => {
     const v = ga.value.trim().toLowerCase();
