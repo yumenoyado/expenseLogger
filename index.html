@@ -144,7 +144,7 @@ body{margin:0;-webkit-text-size-adjust:100%}
 (() => {
 "use strict";
 // ---------- constants ----------
-const CATS = ["Food & Drink","Groceries","Transport","Travel","Shopping","Bills & Utilities","Housing","Health","Entertainment","Education","Gifts","Business","Other"];
+const DEFAULT_CATS = ["Food & Drink","Groceries","Transport","Travel","Shopping","Bills & Utilities","Housing","Health","Entertainment","Education","Gifts","Business","Other"];
 const CAT_ABBR = {"Food & Drink":"FD","Groceries":"GR","Transport":"TR","Travel":"TV","Shopping":"SH","Bills & Utilities":"BU","Housing":"HO","Health":"HE","Entertainment":"EN","Education":"ED","Gifts":"GI","Business":"BZ","Other":"OT"};
 const CAT_WORDS = {
   "Food & Drink":["lunch","dinner","breakfast","brunch","coffee","cafe","café","starbucks","doutor","tully","restaurant","ramen","sushi","beer","drinks","drink","bar","izakaya","snack","snacks","matsuya","yoshinoya","sukiya","mcdonald","mcdonalds","tea","bento","meal","food","pizza","burger","udon","soba","curry","konbini","convenience store","7-eleven","seven eleven","7 eleven","lawson","familymart","family mart","bakery","dessert","cake","juice","water bottle","sandwich","onigiri","noodles","salad","chicken","steak","wine","sake","gyudon","takeout","uber eats","lunch box"],
@@ -159,6 +159,24 @@ const CAT_WORDS = {
   "Education":["book","books","course","class","tuition","school","seminar","udemy","textbook","kindle"],
   "Gifts":["gift","present","donation","omiyage","souvenir","flowers","wedding","birthday"]
 };
+// ---------- editable categories ----------
+// settings.categories: null = the defaults, else [{name, base}]. base = the built-in category it started as
+// (its voice/card keywords follow it through renames), or "" for one you added. "Other" is fixed and always last.
+const catDefs = () => (S.settings.categories && S.settings.categories.length ? S.settings.categories : DEFAULT_CATS.filter(c => c !== "Other").map(c => ({name: c, base: c}))).filter(d => d.name !== "Other");
+const CATS = () => [...catDefs().map(d => d.name), "Other"];
+const catFor = base => (catDefs().find(d => d.base === base) || {name: "Other"}).name;
+const catAbbr = c => CAT_ABBR[c] || (String(c).trim().split(/\s+/).filter(w => /^[\p{L}\p{N}]/u.test(w)).map(w => w[0]).join("").slice(0, 2) || String(c).slice(0, 2)).toUpperCase();
+const catOptions = sel => (sel && !CATS().includes(sel) ? [sel, ...CATS()] : CATS()).map(c => `<option value="${esc(c)}" ${c === sel ? "selected" : ""}>${esc(c)}</option>`).join("");
+// Keyword lists under the current names. A category you added matches its own name.
+function catWords(map, ownName) {
+  const out = [];
+  for (const d of catDefs()) {
+    if (d.base && map[d.base]) out.push([d.name, map[d.base]]);
+    else if (!d.base && ownName) out.push([d.name, [d.name.toLowerCase()]]);
+  }
+  return out;
+}
+const reEsc = w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const CUR_WORDS = [
   ["australian dollars","AUD"],["australian dollar","AUD"],["singapore dollars","SGD"],["singapore dollar","SGD"],["hong kong dollars","HKD"],["hong kong dollar","HKD"],["canadian dollars","CAD"],["canadian dollar","CAD"],["new zealand dollars","NZD"],["us dollars","USD"],["us dollar","USD"],
   ["japanese yen","JPY"],["yen","JPY"],["jpy","JPY"],["dollars","USD"],["dollar","USD"],["bucks","USD"],["usd","USD"],["euros","EUR"],["euro","EUR"],["eur","EUR"],["pounds","GBP"],["pound","GBP"],["quid","GBP"],["gbp","GBP"],
@@ -171,10 +189,10 @@ const MONTHS = ["january","february","march","april","may","june","july","august
 const MON_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const WEEKDAYS = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
 const DRIVE = "Google Drive";
-const APP_VERSION = "v12";
+const APP_VERSION = "v13";
 // Your SMBC card alert sheet. Used until you choose another one in Settings (no file picker needed on iPhone).
 const SMBC_SHEET = {id: "1Z1x5XFZpE9xBjBbyHeNPp5j3I1VmlQpNYqffxK0mhg4", title: "SMBC Card Expenses (三井住友カード)", url: "https://docs.google.com/spreadsheets/d/1Z1x5XFZpE9xBjBbyHeNPp5j3I1VmlQpNYqffxK0mhg4/edit"};
-const DEFAULT_SETTINGS = {googleAccount:"prakashrtvm@gmail.com", archiveFileName:"Expense Log", defaultCurrency:"JPY", trip:null, cardFeePct:0, autoSaveSecs:3, monthlyBudget:0, archiveDest:null, merchantMap:{}, lastPayment:"", cardSheet:null, cardTab:"Alerts", cardSeen:{}, cardLastCheck:null};
+const DEFAULT_SETTINGS = {googleAccount:"prakashrtvm@gmail.com", archiveFileName:"Expense Log", defaultCurrency:"JPY", trip:null, cardFeePct:0, autoSaveSecs:3, monthlyBudget:0, archiveDest:null, merchantMap:{}, lastPayment:"", cardSheet:null, cardTab:"Alerts", cardSeen:{}, cardLastCheck:null, categories:null};
 
 // ---------- state ----------
 const S = { mode:"loading", expenses:[], settings:{...DEFAULT_SETTINGS}, fx:null, fxdays:[], archives:[], tab:"log", pending:[], editingPending:false, answer:null, histQuery:"", histCat:"", repMonth:null, toast:null };
@@ -333,11 +351,11 @@ function parseOne(raw, ctx) {
   // category
   const lowAll = " " + original.toLowerCase() + " ";
   let cat = null;
-  if (res.merchant && ctx.merchantMap[res.merchant.toLowerCase()]) cat = ctx.merchantMap[res.merchant.toLowerCase()];
+  if (res.merchant && CATS().includes(ctx.merchantMap[res.merchant.toLowerCase()])) cat = ctx.merchantMap[res.merchant.toLowerCase()];
   if (!cat) {
-    outer: for (const c of Object.keys(CAT_WORDS)) for (const w of CAT_WORDS[c]) if (new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}\\b`).test(lowAll)) { cat = c; break outer; }
+    outer: for (const [c, words] of catWords(CAT_WORDS, true)) for (const w of words) if (new RegExp(`(^|[^\\p{L}\\p{N}])${reEsc(w)}($|[^\\p{L}\\p{N}])`, "u").test(lowAll)) { cat = c; break outer; }
   }
-  if (!cat && res.isBusiness) cat = "Business";
+  if (!cat && res.isBusiness && catFor("Business") !== "Other") cat = catFor("Business");
   res.category = cat || "Other";
   res.description = desc ? desc.charAt(0).toUpperCase() + desc.slice(1) : (res.merchant || res.category);
   res.lowConfidence = [];
@@ -406,7 +424,8 @@ function tryCommand(text) {
   if (/^(how much|what did i spend|what have i spent|what'?s my total|show (me )?(my )?(total|spending))/.test(t)) {
     const p = periodFromText(t);
     let cat = null;
-    outer: for (const c of CATS) { if (t.includes(c.toLowerCase().split(" ")[0])) { cat = c; break; } for (const w of (CAT_WORDS[c] || [])) if (new RegExp(`\\b${w}\\b`).test(t)) { cat = c; break outer; } }
+    const wordsOf = Object.fromEntries(catWords(CAT_WORDS, false));
+    outer: for (const c of CATS()) { if (t.includes(c.toLowerCase().split(" ")[0])) { cat = c; break; } for (const w of (wordsOf[c] || [])) if (new RegExp(`\\b${reEsc(w)}\\b`).test(t)) { cat = c; break outer; } }
     const rows = S.expenses.filter(e => e.date >= p.from && e.date <= p.to && (!cat || e.category === cat));
     const sum = rows.reduce((a, e) => a + (e.amountJPY || 0), 0);
     S.answer = {q:text, sum, count:rows.length, label:`${cat ? cat + ", " : ""}${p.label}`};
@@ -655,7 +674,7 @@ function sumRange(from, to) { return S.expenses.filter(e => e.date >= from && e.
 function itemHTML(e) {
   const foreign = e.originalCurrency !== "JPY";
   const flags = [e.archivedAt ? '<span class="arch">archived</span>' : "", e.rateStatus === "provisional" ? '<span class="arch">rate pending</span>' : "", e.rateStatus === "missing" ? '<span class="arch">no rate</span>' : ""].join("");
-  return `<button class="item" data-id="${esc(e.id)}"><span class="ico">${CAT_ABBR[e.category] || "OT"}</span><span class="t"><div>${esc(e.description || e.category)}${flags}</div><div class="small muted">${esc([e.merchant, e.category, e.payment].filter(Boolean).join(" · "))}</div>${e.notes ? `<div class="small muted" style="font-style:italic">${esc(e.notes)}</div>` : ""}</span><span class="a"><div class="num">${e.amountJPY != null ? yen(e.amountJPY) : "—"}</div>${foreign ? `<div class="small muted num">${esc(fmtAmt(e.originalAmount, e.originalCurrency))}</div>` : ""}</span></button>`;
+  return `<button class="item" data-id="${esc(e.id)}"><span class="ico">${esc(catAbbr(e.category || "Other"))}</span><span class="t"><div>${esc(e.description || e.category)}${flags}</div><div class="small muted">${esc([e.merchant, e.category, e.payment].filter(Boolean).join(" · "))}</div>${e.notes ? `<div class="small muted" style="font-style:italic">${esc(e.notes)}</div>` : ""}</span><span class="a"><div class="num">${e.amountJPY != null ? yen(e.amountJPY) : "—"}</div>${foreign ? `<div class="small muted num">${esc(fmtAmt(e.originalAmount, e.originalCurrency))}</div>` : ""}</span></button>`;
 }
 function bindItems(root) { root.querySelectorAll(".item[data-id]").forEach(b => b.onclick = () => openEdit(b.dataset.id)); }
 
@@ -717,7 +736,7 @@ function pendingForm(p, i) {
     <label>Amount<input data-f="amount" inputmode="decimal" value="${p.amount ?? ""}" placeholder="Required"></label>
     <label>Currency<select data-f="currency">${curs.map(c => `<option ${c === p.currency ? "selected" : ""}>${c}</option>`).join("")}</select></label>
     ${p.currency !== "JPY" ? `<label class="full">Amount in JPY ${r ? `<span>(rate ${r.rate.toFixed(4)} from ${esc(r.date)}; leave blank to use it)</span>` : "<span>(no rate for this currency yet: enter the yen amount)</span>"}<input data-f="manualJPY" inputmode="numeric" value="${p.manualJPY ?? ""}" placeholder="${r ? Math.round((p.amount||0) * r.rate) : "Required"}"></label>` : ""}
-    <label>Category<select data-f="category">${CATS.map(c => `<option ${c === p.category ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+    <label>Category<select data-f="category">${catOptions(p.category)}</select></label>
     <label>Date<input type="date" data-f="date" value="${esc(p.date)}"></label>
     <label>Merchant<input data-f="merchant" value="${esc(p.merchant || "")}"></label>
     <label>Payment<input data-f="payment" value="${esc(p.payment || "")}" placeholder="Cash, Card, Suica…"></label>
@@ -769,7 +788,7 @@ function viewHistory() {
   for (const e of rows) { if (!cur || cur.date !== e.date) { cur = {date:e.date, items:[], sum:0}; groups.push(cur); } cur.items.push(e); cur.sum += e.amountJPY || 0; }
   const shown = groups.slice(0, 60);
   return `<div class="row"><input id="hq" class="grow" type="search" placeholder="Search description, shop, currency…" value="${esc(S.histQuery)}" aria-label="Search">
-    <select id="hc" style="width:auto" aria-label="Category"><option value="">All categories</option>${CATS.map(c => `<option ${c === S.histCat ? "selected" : ""}>${c}</option>`).join("")}</select></div>
+    <select id="hc" style="width:auto" aria-label="Category"><option value="">All categories</option>${catOptions(S.histCat)}</select></div>
     <div class="small muted">${rows.length} expense${rows.length === 1 ? "" : "s"} · ${yen(rows.reduce((a,e) => a + (e.amountJPY||0), 0))}</div>
     <section class="card" style="padding-top:4px">${shown.length ? shown.map(g => `<div class="day"><span>${esc(dayLabel(g.date))}</span><span class="num">${yen(g.sum)}</span></div><div class="list">${g.items.map(itemHTML).join("")}</div>`).join("") : `<div class="empty">${S.expenses.length ? "Nothing matches that search." : "No expenses yet."}</div>`}
     ${groups.length > 60 ? `<div class="empty small">Showing the latest 60 days with expenses. Search to find older ones.</div>` : ""}</section>`;
@@ -885,7 +904,7 @@ async function importFile(file) {
       e.originalAmount = Number(e.originalAmount) || 0; e.amountJPY = e.amountJPY === "" || e.amountJPY == null ? null : Number(e.amountJPY);
       e.exchangeRate = e.exchangeRate ? Number(e.exchangeRate) : (e.originalCurrency === "JPY" ? 1 : null);
       e.isBusiness = /^(yes|true|1)$/i.test(e.isBusiness || ""); e.originalCurrency = e.originalCurrency || "JPY";
-      e.category = CATS.includes(e.category) ? e.category : "Other"; e.source = "import"; e.tags = [];
+      e.category = CATS().includes(e.category) ? e.category : "Other"; e.source = "import"; e.tags = [];
       e.archivedAt = null; e.archiveFileId = null; e.createdAt = e.updatedAt = new Date().toISOString();
       return e;
     });
@@ -1128,7 +1147,7 @@ function renderSheet() {
       <label>Currency<select id="e_originalCurrency">${curs.map(c => `<option ${c === e.originalCurrency ? "selected" : ""}>${c}</option>`).join("")}</select></label>
       ${foreign ? `<label class="full">Actual JPY charged <span>(from your card statement; blank = today's rate method)</span><input id="e_stmt" inputmode="numeric" value="${e.rateStatus === "statement" || e.rateStatus === "manual" ? esc(e.amountJPY) : ""}" placeholder="${e.amountJPY != null ? Math.round(e.amountJPY) : ""}"></label>
       <div class="full small muted">${e.exchangeRate ? `Rate ${Number(e.exchangeRate).toFixed(4)} JPY per ${esc(e.originalCurrency)} · ${esc(e.rateDate || "")} · ${esc(e.rateStatus)}` : "No rate yet"}</div>` : ""}
-      <label>Category<select id="e_category">${CATS.map(c => `<option ${c === e.category ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+      <label>Category<select id="e_category">${catOptions(e.category)}</select></label>
       <label>Date<input type="date" id="e_date" value="${esc(e.date)}"></label>
       <label>Merchant<input id="e_merchant" value="${esc(e.merchant)}"></label>
       <label>Payment<input id="e_payment" value="${esc(e.payment)}"></label>
@@ -1212,13 +1231,13 @@ function cardCategory(merchant) {
   let best = null;
   for (const [k, c] of Object.entries(map)) {
     const kc = cardCompact(cardShopKey(k));
-    if (!kc) continue;
+    if (!kc || !CATS().includes(c)) continue;
     if (kc === want) return {category: c, how: "learned"};
     if (kc.length >= 4 && (full.includes(kc) || (want.length >= 4 && kc.includes(want))) && (!best || kc.length > best.len)) best = {category: c, len: kc.length};
   }
   if (best) return {category: best.category, how: "learned"};
-  for (const [c, words] of Object.entries(CARD_WORDS)) for (const w of words) { const wc = cardCompact(w); if (wc.length >= 3 ? full.includes(wc) : (" " + String(merchant).toLowerCase() + " ").includes(" " + w + " ")) return {category: c, how: "keyword"}; }
-  for (const [c, words] of Object.entries(CAT_WORDS)) for (const w of words) { const wc = cardCompact(w); if (wc.length >= 5 && full.includes(wc)) return {category: c, how: "keyword"}; }
+  for (const [c, words] of catWords(CARD_WORDS, true)) for (const w of words) { const wc = cardCompact(w); if (wc.length >= 3 ? full.includes(wc) : (" " + String(merchant).toLowerCase() + " ").includes(" " + w + " ")) return {category: c, how: "keyword"}; }
+  for (const [c, words] of catWords(CAT_WORDS, false)) for (const w of words) { const wc = cardCompact(w); if (wc.length >= 5 && full.includes(wc)) return {category: c, how: "keyword"}; }
   return {category: "Other", how: "none"};
 }
 const cardDisplayName = m => { const s = String(m || "").normalize("NFKC").replace(/[\s　]+/g, " ").trim(); return /^[\x20-\x7e]+$/.test(s) && s === s.toUpperCase() ? titleCase(s.toLowerCase()) : s; };
@@ -1265,7 +1284,7 @@ async function checkCardAlerts() {
       const jpy = a.currency === "JPY" ? a.amount : null;
       const dup = jpy == null ? null : S.expenses.find(e => !e.cardEntryId && e.amountJPY === jpy && Math.abs(dayDiff(e.date, a.date)) <= 1);
       const suica = /suica|スイカ|pasmo|チャージ/i.test(a.merchant);
-      const item = {...a, name: cardDisplayName(a.merchant), category: suica ? "Transport" : cat.category, how: suica ? "suica" : cat.how, dup: dup ? `${dup.description || dup.category} ${yen(dup.amountJPY)} on ${dayLabel(dup.date)}` : "", suica, checked: !dup && !suica};
+      const item = {...a, name: cardDisplayName(a.merchant), category: suica ? catFor("Transport") : cat.category, how: suica ? "suica" : cat.how, dup: dup ? `${dup.description || dup.category} ${yen(dup.amountJPY)} on ${dayLabel(dup.date)}` : "", suica, checked: !dup && !suica};
       (seen[a.entryId] === "skipped" ? skipped : fresh).push(item);
     }
     fresh.sort((x, y) => (x.date + x.time).localeCompare(y.date + y.time));
@@ -1289,7 +1308,7 @@ function cardPanelHTML() {
         ${C.showSkipped ? "" : `<input type="checkbox" data-ca-chk="${i}" ${a.checked ? "checked" : ""} aria-label="Add ${esc(a.name)}" style="margin-top:4px;width:20px;height:20px;flex:none">`}
         <div style="min-width:0;flex:1"><div><strong>${esc(a.name || "Card purchase")}</strong></div>
           <div class="meta"><span class="tag">${esc(dayLabel(a.date))}${a.time ? " " + esc(a.time) : ""}</span>${a.how === "keyword" || a.how === "none" ? '<span class="tag warn">category guessed</span>' : ""}${a.dup ? `<span class="tag warn">possible duplicate: ${esc(a.dup)}</span>` : ""}${a.suica ? '<span class="tag warn">Suica top-up? usually a transfer, not an expense</span>' : ""}${a.status && !/pending/i.test(a.status) ? `<span class="tag">${esc(a.status)}</span>` : ""}</div>
-          ${C.showSkipped ? "" : `<select data-ca-cat="${i}" style="margin-top:6px;width:auto" aria-label="Category for ${esc(a.name)}">${CATS.map(c => `<option ${c === a.category ? "selected" : ""}>${c}</option>`).join("")}</select>`}
+          ${C.showSkipped ? "" : `<select data-ca-cat="${i}" style="margin-top:6px;width:auto" aria-label="Category for ${esc(a.name)}">${catOptions(a.category)}</select>`}
         </div>
         <div style="text-align:right;flex:none"><div class="camt">${a.currency === "JPY" ? yen(a.amount) : esc(fmtAmt(a.amount, a.currency))}</div>
           <button class="link small" data-ca-${C.showSkipped ? "unskip" : "skip"}="${i}">${C.showSkipped ? "Bring back" : "Skip"}</button></div>
@@ -1337,7 +1356,16 @@ async function addCardAlerts() {
 }
 
 // ---------- settings ----------
-let delMonth = null, delConfirm = false;
+let delMonth = null, delConfirm = false, catDel = null;
+// Rename or merge category `from` into `to` everywhere: expenses, learned shops, pending items, filters.
+async function moveCategory(from, to) {
+  for (const e of S.expenses.filter(x => x.category === from)) await store.update(e.id, {category: to, updatedAt: new Date().toISOString()});
+  const m = {...S.settings.merchantMap}; for (const k of Object.keys(m)) if (m[k] === from) { if (to === "Other") delete m[k]; else m[k] = to; }
+  S.pending.forEach(p => { if (p.category === from) p.category = to; });
+  if (typeof C !== "undefined" && C) [...(C.items || []), ...(C.skipped || [])].forEach(a => { if (a.category === from) a.category = to; });
+  if (S.histCat === from) S.histCat = to === "Other" ? "" : to;
+  return m;
+}
 function viewSettings() {
   const st = S.settings, tr = st.trip || {};
   const curs = knownCurrencies();
@@ -1346,6 +1374,19 @@ function viewSettings() {
   const delCount = delMonth ? S.expenses.filter(e => e.archivedAt && monthKey(e.date) === delMonth).length : 0;
   const fx = S.fx;
   const mmKeys = S.mmKeys = Object.keys(st.merchantMap || {}).sort();
+  const defs = catDefs(), useCount = c => S.expenses.filter(e => e.category === c).length;
+  const delDef = catDel != null ? defs[catDel] : null, delN = delDef ? useCount(delDef.name) : 0;
+  const delShops = delDef ? Object.values(st.merchantMap || {}).filter(c => c === delDef.name).length : 0;
+  const catSection = `<section class="card" style="display:flex;flex-direction:column;gap:8px">
+    <h2>Categories</h2>
+    <div class="small muted">Rename a category, change the order, remove one, or add your own. Renaming updates every expense and learned shop that uses it. The order here is the order in every category list.</div>
+    ${defs.map((d, i) => `<div class="row"><input class="grow" data-cat-name="${i}" value="${esc(d.name)}" aria-label="Category name" maxlength="40"><span class="small muted num" style="min-width:2.5em;text-align:right">${useCount(d.name) || ""}</span><button data-cat-up="${i}" ${i === 0 ? "disabled" : ""} aria-label="Move ${esc(d.name)} up">Up</button><button class="danger" data-cat-del="${i}" aria-label="Remove ${esc(d.name)}">Remove</button></div>
+      ${catDel === i ? `<div class="banner" style="background:var(--bad-weak)">Remove ${esc(d.name)}?${delN || delShops ? ` Move its ${delN ? `${delN} expense${delN === 1 ? "" : "s"}` : ""}${delN && delShops ? " and " : ""}${delShops ? `${delShops} learned shop${delShops === 1 ? "" : "s"}` : ""} to <select id="cat_moveto" style="width:auto" aria-label="Move to category">${CATS().filter(c => c !== d.name).map(c => `<option value="${esc(c)}" ${c === "Other" ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>` : ""}${delN && S.expenses.some(e => e.category === d.name && e.archivedAt) ? '<div class="small muted">Expenses already archived to Drive keep the old category in the sheet.</div>' : ""}<div class="row" style="margin-top:8px"><button class="danger" id="cat_delyes">Remove</button><button id="cat_delno">Cancel</button></div></div>` : ""}`).join("")}
+    <div class="row"><input class="grow" value="Other" disabled aria-label="Other (fixed)"><span class="small muted">Fixed, used when nothing else fits</span></div>
+    <div class="row"><input class="grow" id="cat_new" placeholder="Add a category, e.g. Kids" aria-label="New category name" maxlength="40"><button id="cat_add">Add</button></div>
+    <div class="small muted">Say a category's name when logging (for example “1200 yen haircut kids”) and the app picks it. Built-in categories also keep their usual keywords after a rename.</div>
+    ${st.categories ? '<button class="link" id="cat_reset" style="align-self:flex-start">Restore the original names and order</button>' : ""}
+  </section>`;
   return `<section class="card form">
     <h2 class="full">Currency</h2>
     <label>Default currency<select id="s_cur">${curs.map(c => `<option ${c === st.defaultCurrency ? "selected" : ""}>${c}</option>`).join("")}</select></label>
@@ -1364,11 +1405,12 @@ function viewSettings() {
     <label>Monthly budget (JPY)<input id="s_budget" inputmode="numeric" value="${esc(st.monthlyBudget || "")}" placeholder="None"></label>
     <label>Auto-save after<select id="s_auto">${[[0,"Off (always confirm)"],[3,"3 seconds"],[5,"5 seconds"],[8,"8 seconds"]].map(([v, l]) => `<option value="${v}" ${Number(st.autoSaveSecs) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
 </section>
+  ${catSection}
   <section class="card" style="display:flex;flex-direction:column;gap:8px">
     <h2>Learned shop categories</h2>
     <div class="small muted">When you log a shop listed here, the app uses its category. Change the category, rename the shop, remove it, or add a new one.</div>
-    ${mmKeys.length ? mmKeys.map((k, i) => `<div class="row"><input class="grow" data-mm-name="${i}" value="${esc(titleCase(k))}" aria-label="Shop name"><select data-mm-cat="${i}" style="width:auto" aria-label="Category for ${esc(k)}">${CATS.map(c => `<option ${c === st.merchantMap[k] ? "selected" : ""}>${c}</option>`).join("")}</select><button class="danger" data-mm-del="${i}" aria-label="Remove ${esc(k)}">Remove</button></div>`).join("") : '<div class="small muted">None yet. Shops are learned when you save an expense with a shop name.</div>'}
-    <div class="row"><input class="grow" id="mm_new" placeholder="Add a shop, e.g. Lawson" aria-label="New shop name"><select id="mm_newcat" style="width:auto" aria-label="Category for new shop">${CATS.map(c => `<option>${c}</option>`).join("")}</select><button id="mm_add">Add</button></div>
+    ${mmKeys.length ? mmKeys.map((k, i) => `<div class="row"><input class="grow" data-mm-name="${i}" value="${esc(titleCase(k))}" aria-label="Shop name"><select data-mm-cat="${i}" style="width:auto" aria-label="Category for ${esc(k)}">${catOptions(st.merchantMap[k])}</select><button class="danger" data-mm-del="${i}" aria-label="Remove ${esc(k)}">Remove</button></div>`).join("") : '<div class="small muted">None yet. Shops are learned when you save an expense with a shop name.</div>'}
+    <div class="row"><input class="grow" id="mm_new" placeholder="Add a shop, e.g. Lawson" aria-label="New shop name"><select id="mm_newcat" style="width:auto" aria-label="Category for new shop">${catOptions("")}</select><button id="mm_add">Add</button></div>
     ${mmKeys.length ? '<button class="link" id="s_clearmap" style="align-self:flex-start">Remove all</button>' : ""}
   </section>
   <section class="card" style="display:flex;flex-direction:column;gap:8px">
@@ -1406,6 +1448,42 @@ function bindSettings() {
   $("#s_auto").onchange = ev => store.saveSettings({autoSaveSecs: Number(ev.target.value)});
   const saveTrip = () => { const c = $("#t_cur").value; store.saveSettings({trip: c ? {name: $("#t_name").value.trim(), currency: c, start: (S.settings.trip && S.settings.trip.start) || today(), end: $("#t_end").value || null} : null}); };
   $("#t_cur").onchange = saveTrip; $("#t_name").onchange = saveTrip; $("#t_end").onchange = saveTrip;
+  const defsNow = () => catDefs().map(d => ({...d}));
+  const cleanName = v => String(v || "").replace(/\s+/g, " ").trim();
+  const taken = (n, skip) => CATS().some((c, i) => i !== skip && c.toLowerCase() === n.toLowerCase());
+  document.querySelectorAll("[data-cat-name]").forEach(el => el.onchange = async () => {
+    const i = +el.dataset.catName, defs = defsNow(), old = defs[i].name, n = cleanName(el.value);
+    if (!n) { toast("A category needs a name."); el.value = old; return; }
+    if (n === old) return;
+    if (taken(n, i)) { toast(`There is already a category called ${n}.`); el.value = old; return; }
+    defs[i].name = n;
+    try { const m = await moveCategory(old, n); await store.saveSettings({categories: defs, merchantMap: m}); } catch (er) { onDbErr(er); }
+    render(); toast(`Renamed to ${n}`);
+  });
+  document.querySelectorAll("[data-cat-up]").forEach(el => el.onclick = () => { const i = +el.dataset.catUp, defs = defsNow(); if (i < 1) return; [defs[i-1], defs[i]] = [defs[i], defs[i-1]]; store.saveSettings({categories: defs}).then(render); });
+  document.querySelectorAll("[data-cat-del]").forEach(el => el.onclick = () => { catDel = +el.dataset.catDel; render(); });
+  const cdn = $("#cat_delno"); if (cdn) cdn.onclick = () => { catDel = null; render(); };
+  const cdy = $("#cat_delyes"); if (cdy) cdy.onclick = async () => {
+    const defs = defsNow(), d = defs[catDel]; if (!d) return;
+    const to = ($("#cat_moveto") || {}).value || "Other";
+    defs.splice(catDel, 1); catDel = null;
+    try { const m = await moveCategory(d.name, to); await store.saveSettings({categories: defs, merchantMap: m}); } catch (er) { onDbErr(er); }
+    render(); toast(`Removed ${d.name}`);
+  };
+  $("#cat_add").onclick = () => {
+    const n = cleanName($("#cat_new").value);
+    if (!n) { toast("Type a category name first."); return; }
+    if (taken(n, -1)) { toast(`There is already a category called ${n}.`); return; }
+    const base = DEFAULT_CATS.includes(n) && !catDefs().some(d => d.base === n) ? n : "";
+    store.saveSettings({categories: [...defsNow(), {name: n, base}]}).then(render); toast(`Added ${n}`);
+  };
+  const cr = $("#cat_reset"); if (cr) cr.onclick = async () => {
+    const own = catDefs().filter(d => !d.base);
+    const defs = [...DEFAULT_CATS.filter(c => c !== "Other").map(c => ({name: c, base: c})), ...own];
+    let m = S.settings.merchantMap;
+    try { for (const d of catDefs()) if (d.base && d.name !== d.base) m = await moveCategory(d.name, d.base); await store.saveSettings({categories: own.length ? defs : null, merchantMap: m}); } catch (er) { onDbErr(er); }
+    render(); toast(own.length ? "Original names and order restored. Your own categories are at the end." : "Original names and order restored");
+  };
   const cm = $("#s_clearmap"); if (cm) cm.onclick = () => store.saveSettings({merchantMap:{}}).then(render);
   const mk = S.mmKeys || [];
   const mmSave = m => store.saveSettings({merchantMap: m}).then(render);
