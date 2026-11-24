@@ -189,10 +189,10 @@ const MONTHS = ["january","february","march","april","may","june","july","august
 const MON_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const WEEKDAYS = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
 const DRIVE = "Google Drive";
-const APP_VERSION = "v13";
+const APP_VERSION = "v14";
 // Your SMBC card alert sheet. Used until you choose another one in Settings (no file picker needed on iPhone).
 const SMBC_SHEET = {id: "1Z1x5XFZpE9xBjBbyHeNPp5j3I1VmlQpNYqffxK0mhg4", title: "SMBC Card Expenses (三井住友カード)", url: "https://docs.google.com/spreadsheets/d/1Z1x5XFZpE9xBjBbyHeNPp5j3I1VmlQpNYqffxK0mhg4/edit"};
-const DEFAULT_SETTINGS = {googleAccount:"prakashrtvm@gmail.com", archiveFileName:"Expense Log", defaultCurrency:"JPY", trip:null, cardFeePct:0, autoSaveSecs:3, monthlyBudget:0, archiveDest:null, merchantMap:{}, lastPayment:"", cardSheet:null, cardTab:"Alerts", cardSeen:{}, cardLastCheck:null, categories:null};
+const DEFAULT_SETTINGS = {googleAccount:"prakashrtvm@gmail.com", archiveFileName:"Expense Log", defaultCurrency:"JPY", trip:null, cardFeePct:0, autoSaveSecs:3, monthlyBudget:0, archiveDest:null, merchantMap:{}, lastPayment:"", cardSheet:null, cardTab:"Alerts", cardSeen:{}, cardLastCheck:null, categories:null, backupAuto:true, backupFolderId:null, backupLast:null, backupCount:0};
 
 // ---------- state ----------
 const S = { mode:"loading", expenses:[], settings:{...DEFAULT_SETTINGS}, fx:null, fxdays:[], archives:[], tab:"log", pending:[], editingPending:false, answer:null, histQuery:"", histCat:"", repMonth:null, toast:null };
@@ -688,6 +688,7 @@ function viewLog() {
   const pend = S.pending.length ? pendingHTML() : "";
   const ans = S.answer ? `<div class="answer"><div class="small muted">${esc(S.answer.label)}</div><b>${yen(S.answer.sum)}</b> <span class="small muted">across ${S.answer.count} expense${S.answer.count === 1 ? "" : "s"}</span></div>` : "";
   return `
+  ${backupNeedsSignIn() ? `<div class="banner">Your expenses haven't been backed up to Google Drive ${S.settings.backupLast ? "for " + esc(whenText(S.settings.backupLast).replace(" ago", "")) : "yet"}.<div class="row" style="margin-top:8px"><button class="primary" id="bk_remind">Back up now</button></div></div>` : ""}
   ${isIOS && !isStandalone ? `<div class="banner">To use this like an app: tap the Share button, then <b>Add to Home Screen</b>, and open it from the icon. Expenses saved here in Safari are kept separately from the icon app.</div>` : ""}
   <div class="card totals">
     <div class="tot"><span class="small muted">Today</span><b>${yen(todaySum)}</b></div>
@@ -745,6 +746,7 @@ function pendingForm(p, i) {
   </div>`;
 }
 function bindLog(root) {
+  const bkr = $("#bk_remind"); if (bkr) bkr.onclick = () => runBackup(true);
   const form = $("#sayForm"), ta = $("#say");
   form.onsubmit = ev => { ev.preventDefault(); stopMic(); const v = $("#say").value; const mv = $("#memo") ? $("#memo").value : ""; clearSay(); submitText(v, mv); };
   ta.onkeydown = ev => { if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); form.requestSubmit(); } };
@@ -892,10 +894,9 @@ async function importFile(file) {
   const have = new Set(S.expenses.map(e => e.id));
   let list = [];
   if (/^\s*\{/.test(text)) {
-    const j = JSON.parse(text);
-    list = j.expenses || [];
-    if (j.settings && !S.expenses.length) await store.saveSettings({...j.settings});
-    if (Array.isArray(j.archives) && !S.archives.length) for (const a of j.archives) await store.addArchive(a);
+    const r = await restoreData(JSON.parse(text));
+    toast(`Imported ${r.added} expense${r.added === 1 ? "" : "s"}${r.skipped ? `, skipped ${r.skipped} already here` : ""}`);
+    render(); return;
   } else {
     const t = parseCsv(text); const h = (t[0] || []).map(x => FIELD_OF[x.trim().toLowerCase()] || null);
     if (!h.includes("date") || !h.includes("originalAmount")) { toast("That file isn't an expense CSV from this app."); return; }
@@ -949,11 +950,14 @@ function googleUserLabel() { if (S.googleUser) return S.googleUser; try { return
 function handleOAuthReturn() {
   if (!location.hash || location.hash.length < 2) return;
   const h = new URLSearchParams(location.hash.slice(1));
-  const back = h.get("state") === "cards" ? "log" : h.get("state") === "cardsheet" ? "settings" : "archive";
+  const st = h.get("state");
+  const back = st === "cards" ? "log" : (st === "cardsheet" || st === "backup" || st === "restore") ? "settings" : "archive";
   if (h.get("access_token")) {
     try { localStorage.setItem("g_tok", JSON.stringify({v: h.get("access_token"), exp: Date.now() + Number(h.get("expires_in") || 3600) * 1000})); } catch (e) {}
     history.replaceState(null, "", redirectUri()); S.tab = back; setTimeout(() => toast("Signed in to Google"), 300);
-    if (h.get("state") === "cards") S.autoCardCheck = true;
+    if (st === "cards") S.autoCardCheck = true;
+    if (st === "backup") S.autoBackup = true;
+    if (st === "restore") S.autoRestoreList = true;
   } else if (h.get("error")) {
     history.replaceState(null, "", redirectUri()); S.tab = back; setTimeout(() => toast("Google sign-in didn't finish: " + h.get("error")), 300);
   }
@@ -966,7 +970,8 @@ async function gfetch(url, opts = {}) {
   catch (e) { throw {code: "network"}; }
   if (r.status === 401) { try { localStorage.removeItem("g_tok"); } catch (e) {} throw {code: "auth"}; }
   if (!r.ok) { let msg = ""; try { const j = await r.json(); msg = (j.error && j.error.message) || ""; } catch (e) {} throw {code: "http", status: r.status, message: msg}; }
-  return r.json();
+  const txt = await r.text();
+  return txt ? JSON.parse(txt) : {};
 }
 function driveMsg(e) {
   switch (e && e.code) {
@@ -1011,6 +1016,125 @@ async function openPicker(mode, thenCheck) {
       A.error = ""; store.saveSettings({archiveDest: A.dest}); render();
     })
     .build().setVisible(true);
+}
+
+// ---------- automatic backup to Google Drive ----------
+// The whole app (expenses, settings, learned shops, card-alert marks, archive history) is saved as a JSON file
+// in the Drive folder "Expense Logger backups": one file per day, the last BK_KEEP days kept.
+// It runs a few seconds after any change, whenever you're signed in to Google. Restore merges it back.
+const BK_FOLDER = "Expense Logger backups", BK_KEEP = 7, BK_DUE_HOURS = 24;
+const BK_SKIP_KEYS = ["backupAuto", "backupFolderId", "backupLast", "backupCount", "cardLastCheck"];
+let BK = {busy: false, timer: null, error: "", list: null, listBusy: false, restoreId: null, restoring: false};
+function backupPayload() {
+  return {app: "voice-expense-logger", version: 1, exportedAt: new Date().toISOString(), appVersion: APP_VERSION, expenses: S.expenses, settings: S.settings, archives: S.archives};
+}
+function backupHash() {
+  const st = {...S.settings}; BK_SKIP_KEYS.forEach(k => delete st[k]);
+  const str = JSON.stringify([[...S.expenses].sort((a, b) => a.id < b.id ? -1 : 1), st, S.archives]);
+  let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(36) + "." + str.length;
+}
+function bkSavedHash() { try { return localStorage.getItem("vel_bk_hash") || ""; } catch (e) { return ""; } }
+const bkChanged = () => backupHash() !== bkSavedHash();
+function backupNeedsSignIn() {
+  if (!driveReady() || !store || S.settings.backupAuto === false || getToken() || !S.expenses.length || !bkChanged()) return false;
+  const last = S.settings.backupLast ? Date.parse(S.settings.backupLast) : 0;
+  return Date.now() - last > BK_DUE_HOURS * 3600e3;
+}
+function backupSoon(ms = 5000) {
+  clearTimeout(BK.timer);
+  BK.timer = setTimeout(() => { if (S.settings.backupAuto !== false && getToken() && bkChanged()) runBackup(false); }, ms);
+}
+const qStr = v => "'" + String(v).replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'";
+async function backupFolderId() {
+  const saved = S.settings.backupFolderId;
+  if (saved) {
+    try { const f = await gfetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(saved)}?fields=id,trashed`); if (f.id && !f.trashed) return f.id; }
+    catch (e) { if (e.code !== "http") throw e; }
+  }
+  const q = `name = ${qStr(BK_FOLDER)} and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  const found = await gfetch("https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(q) + "&fields=files(id)&pageSize=1&orderBy=createdTime");
+  let id = found.files && found.files[0] && found.files[0].id;
+  if (!id) id = (await gfetch("https://www.googleapis.com/drive/v3/files?fields=id", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({name: BK_FOLDER, mimeType: "application/vnd.google-apps.folder"})})).id;
+  if (id !== saved) await store.saveSettings({backupFolderId: id});
+  return id;
+}
+async function listBackups(folder) {
+  const q = `${qStr(folder)} in parents and trashed = false and name contains 'expense-backup-'`;
+  const r = await gfetch("https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(q) + "&fields=files(id,name,modifiedTime,size,appProperties)&pageSize=100&orderBy=name desc");
+  return (r.files || []).filter(f => /^expense-backup-\d{4}-\d{2}-\d{2}\.json$/.test(f.name));
+}
+async function runBackup(manual) {
+  if (BK.busy || !store) return;
+  if (!driveReady()) { if (manual) toast("Google Drive isn't set up in config.js."); return; }
+  // Never back up an empty app: after a wipe that would overwrite the day's good backup. Use Restore instead.
+  if (!S.expenses.length) { if (manual) toast("There are no expenses here to back up. To get them back, use Restore from Drive."); return; }
+  if (!getToken()) { if (manual) signIn("backup"); return; }
+  BK.busy = true; BK.error = ""; liveRender();
+  const hash = backupHash(), data = backupPayload();
+  try {
+    const folder = await backupFolderId();
+    const name = `expense-backup-${today()}.json`;
+    const existing = (await listBackups(folder)).find(f => f.name === name);
+    const meta = {name, mimeType: "application/json", appProperties: {velBackup: "1", count: String(S.expenses.length), appVersion: APP_VERSION}};
+    if (!existing) meta.parents = [folder];
+    const b = "velbk" + Date.now();
+    const body = `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(data)}\r\n--${b}--`;
+    const url = existing ? `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(existing.id)}?uploadType=multipart&fields=id` : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id";
+    await gfetch(url, {method: existing ? "PATCH" : "POST", headers: {"Content-Type": `multipart/related; boundary=${b}`}, body});
+    try { localStorage.setItem("vel_bk_hash", hash); } catch (e) {}
+    await store.saveSettings({backupLast: new Date().toISOString(), backupCount: S.expenses.length});
+    // keep only the newest BK_KEEP daily files
+    try { const all = await listBackups(folder); for (const f of all.slice(BK_KEEP)) await gfetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(f.id)}`, {method: "DELETE"}); } catch (e) {}
+    BK.list = null;
+    if (manual) toast(`Backed up ${S.expenses.length} expense${S.expenses.length === 1 ? "" : "s"} to Google Drive`);
+  } catch (e) {
+    BK.error = e && e.code === "auth" ? "Google sign-in expired. Tap Back up now to sign in again." : driveMsg(e);
+    if (manual) toast(BK.error);
+  } finally { BK.busy = false; liveRender(); }
+}
+async function loadBackupList() {
+  if (!getToken()) { signIn("restore"); return; }
+  BK.listBusy = true; BK.error = ""; render();
+  try { BK.list = await listBackups(await backupFolderId()); }
+  catch (e) { BK.error = driveMsg(e); BK.list = null; }
+  finally { BK.listBusy = false; render(); }
+}
+async function restoreFromDrive(id) {
+  if (BK.restoring) return;
+  BK.restoring = true; render();
+  try {
+    const j = await gfetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?alt=media`);
+    if (!j || j.app !== "voice-expense-logger") throw {code: "layout", message: "That file isn't a backup from this app."};
+    const r = await restoreData(j);
+    BK.restoreId = null; BK.list = null;
+    toast(`Restored ${r.added} expense${r.added === 1 ? "" : "s"}${r.skipped ? `, ${r.skipped} were already here` : ""}`);
+  } catch (e) { toast(driveMsg(e)); }
+  finally { BK.restoring = false; render(); }
+}
+// Shared by Restore from Drive and Import file (backup JSON).
+// Empty app: everything comes back, settings included. Otherwise: missing expenses are added,
+// learned shops and card-alert marks are merged (what's on this iPhone wins), other settings are kept.
+async function restoreData(j) {
+  const have = new Set(S.expenses.map(e => e.id));
+  const list = Array.isArray(j.expenses) ? j.expenses : [];
+  const wasEmpty = !S.expenses.length;
+  if (j.settings) {
+    const keep = {backupAuto: S.settings.backupAuto, backupFolderId: S.settings.backupFolderId, backupLast: S.settings.backupLast, backupCount: S.settings.backupCount};
+    if (wasEmpty) await store.saveSettings({...j.settings, ...keep});
+    else await store.saveSettings({merchantMap: {...(j.settings.merchantMap || {}), ...(S.settings.merchantMap || {})}, cardSeen: {...(j.settings.cardSeen || {}), ...(S.settings.cardSeen || {})}});
+  }
+  if (Array.isArray(j.archives)) { const ids = new Set(S.archives.map(a => a.id)); for (const a of j.archives) if (!a.id || !ids.has(a.id)) await store.addArchive(a); }
+  let added = 0;
+  for (const e of list) { if (!e.date || (e.id && have.has(e.id))) continue; try { await store.add(e); added++; } catch (er) {} }
+  return {added, skipped: list.length - added};
+}
+function whenText(iso) {
+  if (!iso) return "never";
+  const d = new Date(iso), mins = Math.round((Date.now() - d) / 60000);
+  if (mins < 1) return "just now"; if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60); if (hrs < 24) return `${hrs} hour${hrs === 1 ? "" : "s"} ago`;
+  const days = Math.round(hrs / 24); return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 // ---------- archive ----------
@@ -1428,10 +1552,19 @@ function viewSettings() {
       ${delConfirm && delMonth ? `<div class="banner" style="background:var(--bad-weak)">Delete ${delCount} archived expense${delCount === 1 ? "" : "s"} from ${monthLabel(delMonth)} from the app? Your Drive files stay as they are.<div class="row" style="margin-top:8px"><button class="danger" id="d_yes">Delete ${delCount}</button><button id="d_no">Cancel</button></div></div>` : ""}` : '<div class="small muted">Nothing archived yet. Expenses stay in the app until you delete them here or one by one.</div>'}
   </section>
   <section class="card" style="display:flex;flex-direction:column;gap:10px"><h2>Backup and restore</h2>
-    <div class="small muted">Expenses are saved only on this iPhone, inside the home-screen app. ${S.expenses.length} stored. Archive to Drive or export a backup regularly: if the app is removed, unarchived records are lost.</div>
+    <div class="small muted">Expenses are saved on this iPhone, inside the home-screen app (${S.expenses.length} stored). ${S.persisted === true ? "iOS has marked this storage as protected from automatic clean-up." : S.persisted === false ? "iOS may clear this storage if the phone runs very low on space." : ""} Removing the app icon deletes everything, so keep the Drive backup on.</div>
+    ${driveReady() ? `<div class="card" style="background:var(--paper);display:flex;flex-direction:column;gap:8px">
+      <div class="cline"><strong>Google Drive backup</strong><span class="small ${BK.error ? "status-err" : st.backupLast ? "status-ok" : "muted"}">${BK.busy ? "Backing up…" : st.backupLast ? "Last: " + esc(whenText(st.backupLast)) : "Not backed up yet"}</span></div>
+      <div class="small muted">${st.backupLast ? `${st.backupCount || 0} expense${st.backupCount === 1 ? "" : "s"} at ${esc(new Date(st.backupLast).toLocaleString())}. ${bkChanged() ? "Changes since then will be backed up" + (getToken() ? " in a few seconds." : " next time you're signed in.") : "Up to date."}` : "The full app, including settings and learned shops, is saved to the Drive folder “" + BK_FOLDER + "”, one file per day, last " + BK_KEEP + " days kept."}</div>
+      ${BK.error ? `<div class="small status-err">${esc(BK.error)}</div>` : ""}
+      <label class="check"><input type="checkbox" id="bk_auto" ${st.backupAuto !== false ? "checked" : ""}> Back up automatically when signed in to Google</label>
+      <div class="row"><button class="grow primary" id="bk_now" ${BK.busy ? "disabled" : ""}>Back up now</button><button class="grow" id="bk_list" ${BK.listBusy ? "disabled" : ""}>${BK.listBusy ? "Loading…" : "Restore from Drive"}</button></div>
+      ${BK.list ? (BK.list.length ? `<div class="list">${BK.list.map(f => `<div class="cline" style="padding:8px 0;border-top:1px solid var(--line)"><div style="min-width:0"><div>${esc(f.name.slice(15, 25))}</div><div class="small muted">${f.appProperties && f.appProperties.count ? esc(f.appProperties.count) + " expenses · " : ""}saved ${esc(new Date(f.modifiedTime).toLocaleString())}</div></div><button data-bk-pick="${esc(f.id)}">Restore</button></div>
+        ${BK.restoreId === f.id ? `<div class="banner" style="background:var(--accent-weak)">${S.expenses.length ? `Add the expenses from this backup that aren't on this iPhone? Nothing here is deleted or changed. Expenses you deleted after this backup will come back.` : "Restore everything from this backup, including settings and learned shops?"}<div class="row" style="margin-top:8px"><button class="primary" id="bk_yes" ${BK.restoring ? "disabled" : ""}>${BK.restoring ? "Restoring…" : "Restore"}</button><button id="bk_no">Cancel</button></div></div>` : ""}`).join("")}</div>` : '<div class="small muted">No backups found in this Google account yet.</div>') : ""}
+    </div>` : ""}
     <input type="file" id="bkImport" accept=".json,.csv,text/csv,application/json" hidden aria-label="Import a backup or CSV">
     <div class="row"><button class="grow" id="bkExport">Export backup</button><button class="grow" id="bkImportBtn">Import file</button></div>
-    <div class="small muted">Import accepts a backup file from this app or a CSV downloaded from Reports, including from the claude.ai version. Rows already here are skipped.</div>
+    <div class="small muted">Export saves a backup file you can keep anywhere (for example Files › iCloud Drive). Import accepts a backup file from this app or a CSV downloaded from Reports, including from the claude.ai version. Rows already here are skipped.</div>
   </section>
   <section class="card" style="display:flex;flex-direction:column;gap:8px"><h2>Google account</h2>
     <label class="small muted" style="display:flex;flex-direction:column;gap:4px">Google account for Drive archive<input id="g_acct" type="email" inputmode="email" autocomplete="email" value="${esc(st.googleAccount || "")}" placeholder="name@gmail.com"></label>
@@ -1495,6 +1628,12 @@ function bindSettings() {
   const dg = $("#d_go"); if (dg) dg.onclick = () => { delConfirm = true; render(); };
   const dn = $("#d_no"); if (dn) dn.onclick = () => { delConfirm = false; render(); };
   $("#bkExport").onclick = exportBackup;
+  const ba = $("#bk_auto"); if (ba) ba.onchange = () => store.saveSettings({backupAuto: ba.checked}).then(() => { if (ba.checked) backupSoon(500); });
+  const bn = $("#bk_now"); if (bn) bn.onclick = () => runBackup(true);
+  const bl = $("#bk_list"); if (bl) bl.onclick = loadBackupList;
+  document.querySelectorAll("[data-bk-pick]").forEach(el => el.onclick = () => { BK.restoreId = el.dataset.bkPick; render(); });
+  const by = $("#bk_yes"); if (by) by.onclick = () => restoreFromDrive(BK.restoreId);
+  const bno = $("#bk_no"); if (bno) bno.onclick = () => { BK.restoreId = null; render(); };
   $("#bkImportBtn").onclick = () => $("#bkImport").click();
   $("#bkImport").onchange = ev => { const f = ev.target.files && ev.target.files[0]; if (f) importFile(f).catch(() => toast("Couldn't read that file.")); ev.target.value = ""; };
   const go = $("#gout"); if (go) go.onclick = signOut;
@@ -1546,13 +1685,18 @@ render();
 (async () => {
   try { store = await makeIdbStore(); } catch (e) { store = makeLocalStore(); }
   S.mode = "device";
-  try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
+  try { if (navigator.storage && navigator.storage.persist) S.persisted = (await navigator.storage.persisted()) || (await navigator.storage.persist()); } catch (e) {}
+  // Any saved change schedules an automatic Drive backup a few seconds later (only when signed in).
+  for (const k of ["add", "update", "remove", "saveSettings", "addArchive"]) { const f = store[k].bind(store); store[k] = async (...a) => { const r = await f(...a); backupSoon(); return r; }; }
   render();
   refreshRates();
-  checkGoogleUser();
+  checkGoogleUser().then(() => {
+    if (S.autoBackup) { S.autoBackup = false; runBackup(true); } else backupSoon(1500);
+    if (S.autoRestoreList) { S.autoRestoreList = false; loadBackupList(); }
+  });
   recheckProvisional();
   if (S.autoCardCheck) { S.autoCardCheck = false; checkCardAlerts(); }
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshRates(); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { refreshRates(); backupSoon(1500); liveRender(); } else if (BK.timer && getToken() && bkChanged()) { clearTimeout(BK.timer); runBackup(false); } });
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 })();
 })();
